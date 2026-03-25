@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Indoor D435i Avoidance",
+    "command": "experiment/scripts/d435i_ego_indoor.sh",
+    "target": "Send To Current UAV",
+    "category": "Avoidance",
+    "confirm": false
+  },
+  {
+    "name": "Aruco Tracking",
+    "command": "tt/scripts/aruco_detection_with_d435i.sh",
+    "target": "Send To Current UAV",
+    "category": "Perception",
+    "confirm": false
+  },
+  {
+    "name": "Emergency Return Script",
+    "command": "scripts/emergency_return.sh",
+    "target": "Send To Current UAV",
+    "category": "Mission",
+    "confirm": true
+  }
+]

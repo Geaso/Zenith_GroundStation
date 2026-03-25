@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>../qml/Main.qml</file>
+        <file>../qml/components/InfoCard.qml</file>
+        <file>../qml/components/MetricTile.qml</file>
+        <file>../qml/components/SectionTitle.qml</file>
+        <file>../qml/components/PrimaryButton.qml</file>
+        <file>../qml/components/StatusPill.qml</file>
+        <file>../qml/pages/OverviewPage.qml</file>
+        <file>../qml/pages/MissionPage.qml</file>
+        <file>../qml/pages/ScriptsPage.qml</file>
+    </qresource>
+</RCC>

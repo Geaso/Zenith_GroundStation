@@ -1,0 +1,20 @@
+{
+  "protocol_name": "Zenith",
+  "namespace_prefix": "/zenith",
+  "ground_station_ip": "127.0.0.1",
+  "multicast_ip": "224.0.0.88",
+  "udp_port": 8889,
+  "tcp_port": 55555,
+  "tcp_heartbeat_port": 55556,
+  "service_port": 20168,
+  "primary_messages": [
+    "UAVSTATE",
+    "TEXTINFO",
+    "HEARTBEAT",
+    "UAVCONTROLSTATE",
+    "UAVCOMMAND",
+    "UAVSETUP",
+    "PARAMSETTINGS",
+    "CUSTOMDATASEGMENT_1"
+  ]
+}
