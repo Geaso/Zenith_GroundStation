@@ -10,6 +10,10 @@ TelemetryStore::TelemetryStore(QObject *parent)
       m_flightMode("UNKNOWN"),
       m_controllerMode("PX4_ORIGIN"),
       m_controlState("INIT"),
+      m_execState("DISARMED"),
+      m_missionMode("MANUAL"),
+      m_activeCommandSource("NONE"),
+      m_pendingRequest("NONE"),
       m_locationSource("MOCAP"),
       m_gpsStatus("GPS_FIX_TYPE_NO_GPS"),
       m_heartbeatLink("No Heartbeat"),
@@ -36,6 +40,11 @@ QString TelemetryStore::flightStatus() const { return m_flightStatus; }
 QString TelemetryStore::flightMode() const { return m_flightMode; }
 QString TelemetryStore::controllerMode() const { return m_controllerMode; }
 QString TelemetryStore::controlState() const { return m_controlState; }
+QString TelemetryStore::execState() const { return m_execState; }
+QString TelemetryStore::missionMode() const { return m_missionMode; }
+QString TelemetryStore::activeCommandSource() const { return m_activeCommandSource; }
+QString TelemetryStore::pendingRequest() const { return m_pendingRequest; }
+bool TelemetryStore::requestActive() const { return m_requestActive; }
 QString TelemetryStore::locationSource() const { return m_locationSource; }
 QString TelemetryStore::gpsStatus() const { return m_gpsStatus; }
 QString TelemetryStore::heartbeatLink() const { return m_heartbeatLink; }
@@ -182,7 +191,16 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
 void TelemetryStore::applyTextInfo(const QVariantMap &payload)
 {
     const int messageType = payload.value("MessageType").toInt();
-    m_flightStatus = payload.value("Message").toString();
+    const QString message = payload.value("Message").toString();
+
+    // 拦截命令ACK: "CMD_ACK:ID=N:STATUS"
+    if (message.startsWith(QLatin1String("CMD_ACK:"))) {
+        m_commandAck = message;
+        emit telemetryChanged();
+        return;
+    }
+
+    m_flightStatus = message;
     switch (messageType) {
     case 0:
         m_alertLevel = "INFO";
@@ -206,11 +224,39 @@ void TelemetryStore::applyUavControlState(const QVariantMap &payload)
 {
     static const QStringList controlStates = {"INIT", "MANUAL", "HOVER", "COMMAND", "LAND"};
     static const QStringList controllers = {"PX4_ORIGIN", "PID", "UDE", "NE"};
+    static const QStringList execStates = {
+        "DISARMED", "STANDBY", "RC_CONTROL", "AUTO_HOLD",
+        "AUTO_TRACK", "AUTO_LAND", "FAILSAFE"
+    };
+    static const QStringList missionModes = {
+        "MANUAL", "HOVER", "MOVE", "TRACK_TRAJ",
+        "AUTO_EXPLORE", "RETURN_HOME", "LAND_PENDING", "EMERGENCY"
+    };
+    static const QStringList commandSources = {
+        "NONE", "RC", "MISSION", "PLANNER", "FAILSAFE", "GROUND_STATION"
+    };
+    static const QStringList pendingRequests = {
+        "NONE", "ENTER_INIT", "ENTER_RC", "ENTER_CMD",
+        "HOVER", "LAND", "MANUAL_OVERRIDE"
+    };
+
     const int controlState = payload.value("control_state").toInt();
     const int controller = payload.value("pos_controller").toInt();
     m_controlState = controlStates.value(controlState, "UNKNOWN");
     m_controllerMode = controllers.value(controller, "UNKNOWN");
     m_failsafe = payload.value("failsafe").toBool();
+
+    if (payload.contains("exec_state"))
+        m_execState = execStates.value(payload.value("exec_state").toInt(), "UNKNOWN");
+    if (payload.contains("mission_mode"))
+        m_missionMode = missionModes.value(payload.value("mission_mode").toInt(), "UNKNOWN");
+    if (payload.contains("active_command_source"))
+        m_activeCommandSource = commandSources.value(payload.value("active_command_source").toInt(), "UNKNOWN");
+    if (payload.contains("pending_request"))
+        m_pendingRequest = pendingRequests.value(payload.value("pending_request").toInt(), "UNKNOWN");
+    if (payload.contains("request_active"))
+        m_requestActive = payload.value("request_active").toBool();
+
     emit telemetryChanged();
 }
 
@@ -221,6 +267,30 @@ void TelemetryStore::applyHeartbeat(const QVariantMap &payload)
         m_commandAck = payload.value("message").toString();
     }
     m_connected = true;
+    emit telemetryChanged();
+}
+
+void TelemetryStore::setTransportHealth(bool telemetryFresh, bool heartbeatFresh, const QString &summary)
+{
+    QString nextFlightStatus = m_flightStatus;
+    if (!telemetryFresh) {
+        nextFlightStatus = summary.contains("DEGRADED") || summary.contains("RECONNECTING")
+            ? QStringLiteral("Telemetry Stale")
+            : QStringLiteral("No Telemetry");
+    } else if (nextFlightStatus == QLatin1String("No Telemetry") || nextFlightStatus == QLatin1String("Telemetry Stale")) {
+        nextFlightStatus = QStringLiteral("Telemetry Online");
+    }
+
+    const QString nextHeartbeat = heartbeatFresh ? m_heartbeatLink : QStringLiteral("Heartbeat Stale");
+    const bool nextConnected = telemetryFresh;
+
+    if (nextFlightStatus == m_flightStatus && nextHeartbeat == m_heartbeatLink && nextConnected == m_connected) {
+        return;
+    }
+
+    m_flightStatus = nextFlightStatus;
+    m_heartbeatLink = nextHeartbeat;
+    m_connected = nextConnected;
     emit telemetryChanged();
 }
 
@@ -258,8 +328,7 @@ void TelemetryStore::setDesiredReference(double posX, double posY, double posZ, 
 QString TelemetryStore::locationSourceName(int locationSource) const
 {
     static const QStringList names = {
-        "MOCAP", "T265", "GAZEBO", "FAKE_ODOM", "GPS", "RTK", "UWB",
-        "VINS", "OPTICAL_FLOW", "VIOBOT", "MID360", "BSA_SLAM", "ODIN", "PROSIM"
+        "GPS", "RTK", "VINS", "MID360", "ODIN", "ORBSLAM3", "OAKVIO"
     };
     return names.value(locationSource, "UNKNOWN");
 }

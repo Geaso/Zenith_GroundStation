@@ -15,6 +15,11 @@ public:
     QString flightMode() const;
     QString controllerMode() const;
     QString controlState() const;
+    QString execState() const;
+    QString missionMode() const;
+    QString activeCommandSource() const;
+    QString pendingRequest() const;
+    bool requestActive() const;
     QString locationSource() const;
     QString gpsStatus() const;
     QString heartbeatLink() const;
@@ -62,6 +67,7 @@ public:
     void applyTextInfo(const QVariantMap &payload);
     void applyUavControlState(const QVariantMap &payload);
     void applyHeartbeat(const QVariantMap &payload);
+    void setTransportHealth(bool telemetryFresh, bool heartbeatFresh, const QString &summary);
     void setCommandFeedback(const QString &commandName, const QString &ackText);
     void setMissionStage(const QString &stage);
     void setWaypointPoints(const QList<QPointF> &points);
@@ -81,6 +87,11 @@ private:
     QString m_flightMode;
     QString m_controllerMode;
     QString m_controlState;
+    QString m_execState;
+    QString m_missionMode;
+    QString m_activeCommandSource;
+    QString m_pendingRequest;
+    bool m_requestActive = false;
     QString m_locationSource;
     QString m_gpsStatus;
     QString m_heartbeatLink;

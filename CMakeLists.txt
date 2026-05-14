@@ -25,17 +25,23 @@ set(APP_SOURCES
     src/ZenithProtocolProfile.h
     src/ScriptActionModel.cpp
     src/ScriptActionModel.h
+    src/FlightRecorder.cpp
+    src/FlightRecorder.h
+    src/ParamStore.cpp
+    src/ParamStore.h
     src/ZenithProtocol.h
     resources/qml.qrc
 )
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_add_executable(${PROJECT_NAME}
+        WIN32
         MANUAL_FINALIZATION
         ${APP_SOURCES}
     )
 else()
     add_executable(${PROJECT_NAME}
+        WIN32
         ${APP_SOURCES}
     )
 endif()

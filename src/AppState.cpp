@@ -1,11 +1,14 @@
 #include "AppState.h"
 
 #include "CommandDispatcher.h"
+#include "FlightRecorder.h"
+#include "ParamStore.h"
 #include "TelemetryStore.h"
 #include "ZenithProtocolClient.h"
 #include "ZenithProtocol.h"
 
 #include <QDateTime>
+#include <QSettings>
 
 AppState::AppState(QObject *parent)
     : QObject(parent)
@@ -13,6 +16,8 @@ AppState::AppState(QObject *parent)
     m_telemetryStore = new TelemetryStore(this);
     m_protocolClient = new ZenithProtocolClient(this);
     m_commandDispatcher = new CommandDispatcher(m_telemetryStore, m_protocolClient, this);
+    m_flightRecorder = new FlightRecorder(m_telemetryStore, this);
+    m_paramStore = new ParamStore(this);
 
     connect(m_telemetryStore, &TelemetryStore::telemetryChanged, this, [this]() {
         syncFromStore();
@@ -23,6 +28,11 @@ AppState::AppState(QObject *parent)
         emit pathChanged();
     });
     connect(m_protocolClient, &ZenithProtocolClient::linkStatesChanged, this, [this]() {
+        m_telemetryStore->setTransportHealth(
+            m_protocolClient->telemetryFresh(),
+            m_protocolClient->heartbeatFresh(),
+            m_protocolClient->connectionSummary());
+        syncFromStore();
         m_remoteHostIp = m_protocolClient->remoteHostIp();
         m_udpPort = m_protocolClient->udpPort();
         m_tcpPort = m_protocolClient->tcpPort();
@@ -42,19 +52,30 @@ AppState::AppState(QObject *parent)
             m_telemetryStore->applyUavState(payload, robotId);
             break;
         case ZenithProtocol::TEXTINFO:
+        {
+            const QString msg = payload.value("Message").toString();
+            if (msg.startsWith(QLatin1String("MODESELECTION_ACK:"))) {
+                m_protocolClient->noteModeSelectionAck();
+            }
             m_telemetryStore->applyTextInfo(payload);
             break;
+        }
         case ZenithProtocol::HEARTBEAT:
             m_telemetryStore->applyHeartbeat(payload);
             break;
         case ZenithProtocol::UAVCONTROLSTATE:
             m_telemetryStore->applyUavControlState(payload);
             break;
+        case ZenithProtocol::PARAMSETTINGS:
+            m_paramStore->applyParamSettings(payload);
+            break;
         default:
             break;
         }
     });
-    bootstrapDemoTelemetry();
+    if (QSettings().value("demoMode", false).toBool()) {
+        bootstrapDemoTelemetry();
+    }
     syncFromStore();
     m_remoteHostIp = m_protocolClient->remoteHostIp();
     m_udpPort = m_protocolClient->udpPort();
@@ -66,6 +87,18 @@ AppState::AppState(QObject *parent)
     m_connectionSummary = m_protocolClient->connectionSummary();
     m_protocolLogText = m_protocolClient->protocolLogText();
     m_protocolConnected = m_protocolClient->isConnected();
+
+    // Load last-used connection profile
+    QString lastProfile = lastUsedProfile();
+    if (!lastProfile.isEmpty()) {
+        QVariantMap p = loadConnectionProfile(lastProfile);
+        if (!p.isEmpty()) {
+            applyConnectionSettings(p.value("ip").toString(),
+                                    p.value("udp").toInt(),
+                                    p.value("tcp").toInt(),
+                                    p.value("heartbeat").toInt());
+        }
+    }
 }
 
 AppState::~AppState() = default;
@@ -75,6 +108,11 @@ QString AppState::flightStatus() const { return m_flightStatus; }
 QString AppState::flightMode() const { return m_flightMode; }
 QString AppState::controllerMode() const { return m_controllerMode; }
 QString AppState::controlState() const { return m_controlState; }
+QString AppState::execState() const { return m_execState; }
+QString AppState::missionMode() const { return m_missionMode; }
+QString AppState::activeCommandSource() const { return m_activeCommandSource; }
+QString AppState::pendingRequest() const { return m_pendingRequest; }
+bool AppState::requestActive() const { return m_requestActive; }
 QString AppState::locationSource() const { return m_locationSource; }
 QString AppState::gpsStatus() const { return m_gpsStatus; }
 QString AppState::heartbeatLink() const { return m_heartbeatLink; }
@@ -148,6 +186,24 @@ void AppState::runScriptAction(const QString &name, const QString &command, cons
     emit commandTriggered(QString("Script Run: %1").arg(name));
 }
 
+void AppState::armVehicle(bool arm)
+{
+    m_commandDispatcher->armVehicle(arm);
+    emit commandTriggered(arm ? "Arm" : "Disarm");
+}
+
+void AppState::setPx4Mode(const QString &mode)
+{
+    m_commandDispatcher->setPx4Mode(mode);
+    emit commandTriggered(QString("PX4 Mode: %1").arg(mode));
+}
+
+void AppState::switchLocationSource(int sourceIndex)
+{
+    m_commandDispatcher->switchLocationSource(sourceIndex);
+    emit commandTriggered(QString("Switch Location Source %1").arg(sourceIndex));
+}
+
 void AppState::applyConnectionSettings(const QString &hostIp, int udpPort, int tcpPort, int heartbeatPort)
 {
     m_protocolClient->setRemoteHostIp(hostIp);
@@ -178,6 +234,55 @@ bool AppState::testProtocol()
     return m_protocolClient->testConnection();
 }
 
+void AppState::startRecording()
+{
+    m_flightRecorder->start(QStringLiteral("flight_logs"));
+    emit recordingChanged();
+}
+
+void AppState::stopRecording()
+{
+    m_flightRecorder->stop();
+    emit recordingChanged();
+}
+
+void AppState::requestParams(int module)
+{
+    QVariantMap payload;
+    payload.insert("param_module", module);
+    payload.insert("params", QVariantList{});
+    m_protocolClient->sendTcpMessage(ZenithProtocol::PARAMSETTINGS, payload, m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback(QString("Request Params module=%1").arg(module), "ParamSettings queued");
+}
+
+void AppState::uploadDirtyParams()
+{
+    const auto dirty = m_paramStore->dirtyEntries();
+    if (dirty.isEmpty()) return;
+
+    QVariantList paramsList;
+    for (const auto &entry : dirty) {
+        QVariantMap pm;
+        pm.insert("type", entry.type);
+        pm.insert("param_name", entry.name);
+        pm.insert("param_value", entry.value);
+        paramsList.append(pm);
+    }
+    QVariantMap payload;
+    payload.insert("param_module", 6); // SEARCHMODIFY
+    payload.insert("params", paramsList);
+    m_protocolClient->sendTcpMessage(ZenithProtocol::PARAMSETTINGS, payload, m_telemetryStore->currentVehicleId());
+    m_paramStore->clearDirty();
+    m_telemetryStore->setCommandFeedback("Upload Params", QString("%1 params uploaded").arg(dirty.size()));
+}
+
+QObject *AppState::paramStore() const { return m_paramStore; }
+
+bool AppState::recording() const { return m_flightRecorder->isRecording(); }
+QString AppState::recordingFile() const { return m_flightRecorder->filePath(); }
+int AppState::recordingSamples() const { return m_flightRecorder->sampleCount(); }
+double AppState::recordingElapsed() const { return m_flightRecorder->elapsedSeconds(); }
+
 QVariantList AppState::toVariantList(const QList<QPointF> &points) const
 {
     QVariantList list;
@@ -198,6 +303,11 @@ void AppState::syncFromStore()
     m_flightMode = m_telemetryStore->flightMode();
     m_controllerMode = m_telemetryStore->controllerMode();
     m_controlState = m_telemetryStore->controlState();
+    m_execState = m_telemetryStore->execState();
+    m_missionMode = m_telemetryStore->missionMode();
+    m_activeCommandSource = m_telemetryStore->activeCommandSource();
+    m_pendingRequest = m_telemetryStore->pendingRequest();
+    m_requestActive = m_telemetryStore->requestActive();
     m_locationSource = m_telemetryStore->locationSource();
     m_gpsStatus = m_telemetryStore->gpsStatus();
     m_heartbeatLink = m_telemetryStore->heartbeatLink();
@@ -237,6 +347,150 @@ void AppState::syncFromStore()
     m_waypointPoints = m_telemetryStore->waypointPoints();
 }
 
+// ── Connection profile persistence ──
+
+QVariantList AppState::connectionProfiles() const
+{
+    QSettings settings;
+    QVariantList profiles;
+    int size = settings.beginReadArray("ConnectionProfiles");
+    for (int i = 0; i < size; ++i) {
+        settings.setArrayIndex(i);
+        QVariantMap p;
+        p.insert("name", settings.value("name").toString());
+        p.insert("ip", settings.value("ip").toString());
+        p.insert("udp", settings.value("udp").toInt());
+        p.insert("tcp", settings.value("tcp").toInt());
+        p.insert("heartbeat", settings.value("heartbeat").toInt());
+        profiles.append(p);
+    }
+    settings.endArray();
+    return profiles;
+}
+
+void AppState::saveConnectionProfile(const QString &name, const QString &ip, int udpPort, int tcpPort, int heartbeatPort)
+{
+    QSettings settings;
+
+    // Read existing profiles
+    QList<QVariantMap> profiles;
+    int size = settings.beginReadArray("ConnectionProfiles");
+    for (int i = 0; i < size; ++i) {
+        settings.setArrayIndex(i);
+        QVariantMap p;
+        p.insert("name", settings.value("name").toString());
+        p.insert("ip", settings.value("ip").toString());
+        p.insert("udp", settings.value("udp").toInt());
+        p.insert("tcp", settings.value("tcp").toInt());
+        p.insert("heartbeat", settings.value("heartbeat").toInt());
+        profiles.append(p);
+    }
+    settings.endArray();
+
+    // Update or append
+    bool found = false;
+    for (auto &p : profiles) {
+        if (p.value("name").toString() == name) {
+            p.insert("ip", ip);
+            p.insert("udp", udpPort);
+            p.insert("tcp", tcpPort);
+            p.insert("heartbeat", heartbeatPort);
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        QVariantMap p;
+        p.insert("name", name);
+        p.insert("ip", ip);
+        p.insert("udp", udpPort);
+        p.insert("tcp", tcpPort);
+        p.insert("heartbeat", heartbeatPort);
+        profiles.append(p);
+    }
+
+    // Write back
+    settings.beginWriteArray("ConnectionProfiles", profiles.size());
+    for (int i = 0; i < profiles.size(); ++i) {
+        settings.setArrayIndex(i);
+        const auto &p = profiles.at(i);
+        settings.setValue("name", p.value("name"));
+        settings.setValue("ip", p.value("ip"));
+        settings.setValue("udp", p.value("udp"));
+        settings.setValue("tcp", p.value("tcp"));
+        settings.setValue("heartbeat", p.value("heartbeat"));
+    }
+    settings.endArray();
+
+    settings.setValue("lastUsedProfile", name);
+    settings.sync();
+    emit profilesChanged();
+}
+
+void AppState::deleteConnectionProfile(const QString &name)
+{
+    QSettings settings;
+
+    QList<QVariantMap> profiles;
+    int size = settings.beginReadArray("ConnectionProfiles");
+    for (int i = 0; i < size; ++i) {
+        settings.setArrayIndex(i);
+        QVariantMap p;
+        p.insert("name", settings.value("name").toString());
+        p.insert("ip", settings.value("ip").toString());
+        p.insert("udp", settings.value("udp").toInt());
+        p.insert("tcp", settings.value("tcp").toInt());
+        p.insert("heartbeat", settings.value("heartbeat").toInt());
+        if (p.value("name").toString() != name)
+            profiles.append(p);
+    }
+    settings.endArray();
+
+    settings.beginWriteArray("ConnectionProfiles", profiles.size());
+    for (int i = 0; i < profiles.size(); ++i) {
+        settings.setArrayIndex(i);
+        const auto &p = profiles.at(i);
+        settings.setValue("name", p.value("name"));
+        settings.setValue("ip", p.value("ip"));
+        settings.setValue("udp", p.value("udp"));
+        settings.setValue("tcp", p.value("tcp"));
+        settings.setValue("heartbeat", p.value("heartbeat"));
+    }
+    settings.endArray();
+
+    if (settings.value("lastUsedProfile").toString() == name)
+        settings.remove("lastUsedProfile");
+
+    settings.sync();
+    emit profilesChanged();
+}
+
+QVariantMap AppState::loadConnectionProfile(const QString &name) const
+{
+    QSettings settings;
+    int size = settings.beginReadArray("ConnectionProfiles");
+    for (int i = 0; i < size; ++i) {
+        settings.setArrayIndex(i);
+        if (settings.value("name").toString() == name) {
+            QVariantMap p;
+            p.insert("name", name);
+            p.insert("ip", settings.value("ip").toString());
+            p.insert("udp", settings.value("udp").toInt());
+            p.insert("tcp", settings.value("tcp").toInt());
+            p.insert("heartbeat", settings.value("heartbeat").toInt());
+            settings.endArray();
+            return p;
+        }
+    }
+    settings.endArray();
+    return {};
+}
+
+QString AppState::lastUsedProfile() const
+{
+    return QSettings().value("lastUsedProfile").toString();
+}
+
 void AppState::bootstrapDemoTelemetry()
 {
     QVariantMap uavState;
@@ -262,6 +516,11 @@ void AppState::bootstrapDemoTelemetry()
     controlState.insert("control_state", 2);
     controlState.insert("pos_controller", 0);
     controlState.insert("failsafe", false);
+    controlState.insert("exec_state", 3);           // AUTO_HOLD
+    controlState.insert("mission_mode", 1);          // HOVER
+    controlState.insert("active_command_source", 5); // GROUND_STATION
+    controlState.insert("pending_request", 0);       // NONE
+    controlState.insert("request_active", false);
     m_telemetryStore->applyUavControlState(controlState);
 
     QVariantMap heartbeat;

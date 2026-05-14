@@ -3,10 +3,13 @@
 #include <QObject>
 #include <QPointF>
 #include <QVariantList>
+#include <QVariantMap>
 
 class TelemetryStore;
 class ZenithProtocolClient;
 class CommandDispatcher;
+class FlightRecorder;
+class ParamStore;
 
 class AppState : public QObject
 {
@@ -16,6 +19,11 @@ class AppState : public QObject
     Q_PROPERTY(QString flightMode READ flightMode NOTIFY telemetryChanged)
     Q_PROPERTY(QString controllerMode READ controllerMode NOTIFY telemetryChanged)
     Q_PROPERTY(QString controlState READ controlState NOTIFY telemetryChanged)
+    Q_PROPERTY(QString execState READ execState NOTIFY telemetryChanged)
+    Q_PROPERTY(QString missionMode READ missionMode NOTIFY telemetryChanged)
+    Q_PROPERTY(QString activeCommandSource READ activeCommandSource NOTIFY telemetryChanged)
+    Q_PROPERTY(QString pendingRequest READ pendingRequest NOTIFY telemetryChanged)
+    Q_PROPERTY(bool requestActive READ requestActive NOTIFY telemetryChanged)
     Q_PROPERTY(QString locationSource READ locationSource NOTIFY telemetryChanged)
     Q_PROPERTY(QString gpsStatus READ gpsStatus NOTIFY telemetryChanged)
     Q_PROPERTY(QString heartbeatLink READ heartbeatLink NOTIFY telemetryChanged)
@@ -63,6 +71,10 @@ class AppState : public QObject
     Q_PROPERTY(bool protocolConnected READ protocolConnected NOTIFY linkStateChanged)
     Q_PROPERTY(QVariantList pathPoints READ pathPoints NOTIFY pathChanged)
     Q_PROPERTY(QVariantList waypointPoints READ waypointPoints NOTIFY pathChanged)
+    Q_PROPERTY(bool recording READ recording NOTIFY recordingChanged)
+    Q_PROPERTY(QString recordingFile READ recordingFile NOTIFY recordingChanged)
+    Q_PROPERTY(int recordingSamples READ recordingSamples NOTIFY telemetryChanged)
+    Q_PROPERTY(double recordingElapsed READ recordingElapsed NOTIFY telemetryChanged)
 public:
     explicit AppState(QObject *parent = nullptr);
     ~AppState() override;
@@ -72,6 +84,11 @@ public:
     QString flightMode() const;
     QString controllerMode() const;
     QString controlState() const;
+    QString execState() const;
+    QString missionMode() const;
+    QString activeCommandSource() const;
+    QString pendingRequest() const;
+    bool requestActive() const;
     QString locationSource() const;
     QString gpsStatus() const;
     QString heartbeatLink() const;
@@ -124,10 +141,29 @@ public:
     Q_INVOKABLE void issueCommand(const QString &commandName);
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScriptAction(const QString &name, const QString &command, const QString &target);
+    Q_INVOKABLE void armVehicle(bool arm);
+    Q_INVOKABLE void setPx4Mode(const QString &mode);
+    Q_INVOKABLE void switchLocationSource(int sourceIndex);
     Q_INVOKABLE void applyConnectionSettings(const QString &hostIp, int udpPort, int tcpPort, int heartbeatPort);
     Q_INVOKABLE void connectProtocol();
     Q_INVOKABLE void disconnectProtocol();
     Q_INVOKABLE bool testProtocol();
+    Q_INVOKABLE void startRecording();
+    Q_INVOKABLE void stopRecording();
+    Q_INVOKABLE void requestParams(int module);
+    Q_INVOKABLE void uploadDirtyParams();
+    Q_INVOKABLE QObject *paramStore() const;
+
+    // Connection profile persistence
+    Q_INVOKABLE QVariantList connectionProfiles() const;
+    Q_INVOKABLE void saveConnectionProfile(const QString &name, const QString &ip, int udpPort, int tcpPort, int heartbeatPort);
+    Q_INVOKABLE void deleteConnectionProfile(const QString &name);
+    Q_INVOKABLE QVariantMap loadConnectionProfile(const QString &name) const;
+    Q_INVOKABLE QString lastUsedProfile() const;
+    bool recording() const;
+    QString recordingFile() const;
+    int recordingSamples() const;
+    double recordingElapsed() const;
 
 signals:
     void telemetryChanged();
@@ -135,6 +171,8 @@ signals:
     void commandTriggered(const QString &commandName);
     void linkStateChanged();
     void linkSettingsChanged();
+    void recordingChanged();
+    void profilesChanged();
 
 private:
     QVariantList toVariantList(const QList<QPointF> &points) const;
@@ -146,6 +184,11 @@ private:
     QString m_flightMode;
     QString m_controllerMode;
     QString m_controlState;
+    QString m_execState;
+    QString m_missionMode;
+    QString m_activeCommandSource;
+    QString m_pendingRequest;
+    bool m_requestActive = false;
     QString m_locationSource;
     QString m_gpsStatus;
     QString m_heartbeatLink;
@@ -196,4 +239,6 @@ private:
     TelemetryStore *m_telemetryStore = nullptr;
     ZenithProtocolClient *m_protocolClient = nullptr;
     CommandDispatcher *m_commandDispatcher = nullptr;
+    FlightRecorder *m_flightRecorder = nullptr;
+    ParamStore *m_paramStore = nullptr;
 };

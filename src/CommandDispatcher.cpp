@@ -13,8 +13,23 @@ CommandDispatcher::CommandDispatcher(TelemetryStore *telemetryStore, ZenithProto
 {
 }
 
+namespace {
+bool ensureControlLinkReady(TelemetryStore *telemetryStore, ZenithProtocolClient *protocolClient, const QString &commandName)
+{
+    if (protocolClient->canSendControlCommands()) {
+        return true;
+    }
+    telemetryStore->setCommandFeedback(commandName, QStringLiteral("Blocked: link not CONNECTED"));
+    return false;
+}
+}
+
 void CommandDispatcher::issueQuickAction(const QString &name)
 {
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, name)) {
+        return;
+    }
+
     QVariantMap payload;
 
     if (name == "Hover Here" || name == "Hover Home") {
@@ -46,6 +61,10 @@ void CommandDispatcher::issueQuickAction(const QString &name)
 
 void CommandDispatcher::sendManualMove(const QString &mode, double x, double y, double z, double yawDeg)
 {
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, QString("Manual Move %1").arg(mode))) {
+        return;
+    }
+
     static const QMap<QString, int> moveModes = {
         {"XYZ_POS", 0},
         {"XY_VEL_Z_POS", 1},
@@ -103,6 +122,10 @@ void CommandDispatcher::sendManualMove(const QString &mode, double x, double y, 
 
 void CommandDispatcher::runScript(const QString &name, const QString &command, const QString &target)
 {
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, QString("StartScript: %1").arg(name))) {
+        return;
+    }
+
     QVariantMap payload;
     payload.insert("cmd", command);
     payload.insert("mode", 1);
@@ -117,8 +140,69 @@ void CommandDispatcher::runScript(const QString &name, const QString &command, c
     m_telemetryStore->setCommandFeedback(QString("StartScript: %1").arg(name), "StartScript payload queued");
 }
 
+void CommandDispatcher::armVehicle(bool arm)
+{
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, arm ? QStringLiteral("Arm") : QStringLiteral("Disarm"))) {
+        return;
+    }
+
+    QVariantMap payload;
+    payload.insert("cmd", 0);  // ARMING
+    payload.insert("arming", arm);
+    payload.insert("px4_mode", QString());
+    payload.insert("control_state", QString());
+    sendUavSetup(payload, arm ? "Arm" : "Disarm");
+}
+
+void CommandDispatcher::setPx4Mode(const QString &mode)
+{
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, QString("PX4 Mode: %1").arg(mode))) {
+        return;
+    }
+
+    QVariantMap payload;
+    payload.insert("cmd", 1);  // SET_PX4_MODE
+    payload.insert("arming", false);
+    payload.insert("px4_mode", mode);
+    payload.insert("control_state", QString());
+    sendUavSetup(payload, QString("PX4 Mode: %1").arg(mode));
+}
+
+void CommandDispatcher::switchLocationSource(int sourceIndex)
+{
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, QString("Switch Location Source %1").arg(sourceIndex))) {
+        return;
+    }
+
+    static const QStringList sourceNames = {
+        "GPS", "RTK", "VINS", "MID360", "ODIN", "ORBSLAM3", "OAKVIO"
+    };
+
+    const int vehicleId = m_telemetryStore->currentVehicleId();
+    const QString paramName = QString("/uav_control_main_%1/control/location_source").arg(vehicleId);
+
+    QVariantMap param;
+    param.insert("type", 1);  // INT
+    param.insert("param_name", paramName);
+    param.insert("param_value", QString::number(sourceIndex));
+
+    QVariantMap payload;
+    payload.insert("param_module", 6);  // SEARCHMODIFY
+    payload.insert("params", QVariantList{param});
+
+    const QString name = sourceNames.value(sourceIndex, "UNKNOWN");
+    m_protocolClient->sendTcpMessage(ZenithProtocol::PARAMSETTINGS, payload, vehicleId);
+    m_telemetryStore->setCommandFeedback(QString("LocationSource: %1").arg(name), "ParamSettings queued");
+}
+
 void CommandDispatcher::sendUavCommand(const QVariantMap &payload, const QString &humanReadableName)
 {
     m_protocolClient->sendTcpMessage(ZenithProtocol::UAVCOMMAND, payload, m_telemetryStore->currentVehicleId());
     m_telemetryStore->setCommandFeedback(humanReadableName, "UAVCommand queued");
+}
+
+void CommandDispatcher::sendUavSetup(const QVariantMap &payload, const QString &humanReadableName)
+{
+    m_protocolClient->sendTcpMessage(ZenithProtocol::UAVSETUP, payload, m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback(humanReadableName, "UAVSetup queued");
 }

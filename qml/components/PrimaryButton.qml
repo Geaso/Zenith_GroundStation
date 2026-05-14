@@ -9,6 +9,8 @@ Button {
     implicitHeight: 42
     implicitWidth: 132
 
+    opacity: root.enabled ? 1.0 : 0.4
+
     background: Rectangle {
         radius: 12
         color: root.down ? Qt.darker(root.fillColor, 1.08) : root.fillColor
