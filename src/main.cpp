@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("Zenith Ground Station");
     QGuiApplication::setOrganizationName("AMOVLAB");
-    QGuiApplication::setWindowIcon(QIcon(":/Zenith.png"));
+    QGuiApplication::setWindowIcon(QIcon(":/Zenith.ico"));
     QQuickStyle::setStyle("Basic");
 
     AppState appState;

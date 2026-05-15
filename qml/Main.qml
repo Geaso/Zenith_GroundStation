@@ -32,12 +32,10 @@ ApplicationWindow {
                     anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 14; spacing: 10
 
-                    Image {
-                        source: "qrc:/Zenith.png"
-                        width: 36; height: 36
-                        fillMode: Image.PreserveAspectFit
-                        anchors.verticalCenter: parent.verticalCenter
-                        smooth: true; mipmap: true
+                    Column {
+                        anchors.verticalCenter: parent.verticalCenter; spacing: 1
+                        Text { text: "ZENITH"; color: "#58A6FF"; font.pixelSize: 17; font.bold: true; font.letterSpacing: 3 }
+                        Text { text: "Ground Station"; color: "#6E7681"; font.pixelSize: 8; font.letterSpacing: 1 }
                     }
 
                     Rectangle { width: 1; height: 26; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }

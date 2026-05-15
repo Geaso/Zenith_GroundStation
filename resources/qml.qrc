@@ -1,6 +1,7 @@
 <RCC>
     <qresource prefix="/">
         <file alias="Zenith.png">Zenith.png</file>
+        <file alias="Zenith.ico">Zenith.ico</file>
         <file>../qml/Main.qml</file>
         <file>../qml/components/InfoCard.qml</file>
         <file>../qml/components/MetricTile.qml</file>
