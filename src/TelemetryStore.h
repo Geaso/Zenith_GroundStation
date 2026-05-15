@@ -61,6 +61,8 @@ public:
     QList<QPointF> waypointPoints() const;
     QString currentVehicleTopicRoot() const;
     int currentVehicleId() const;
+    QStringList runningNodes() const;
+    QString moduleExecFeedback() const;
 
     void setVehicleName(const QString &name);
     void applyUavState(const QVariantMap &payload, int senderId);
@@ -130,4 +132,6 @@ private:
     double m_desiredVelocityZ = 0.0;
     double m_homeDistance = 0.0;
     int m_currentVehicleId = 1;
+    QStringList m_runningNodes;
+    QString m_moduleExecFeedback;
 };

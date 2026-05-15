@@ -583,7 +583,7 @@ Item {
             // ── Quick Commands ──
             Rectangle {
                 width: parent.width
-                height: 118
+                height: 134
                 radius: 8
                 color: "#161B22"
                 border.color: "#30363D"
@@ -600,7 +600,7 @@ Item {
             // ── Manual Control ──
             Rectangle {
                 width: parent.width
-                height: parent.height - 5 * 68 - 118 - 1 - 7 * 6
+                height: parent.height - 5 * 68 - 134 - 1 - 7 * 6
                 radius: 8
                 color: "#161B22"
                 border.color: "#30363D"

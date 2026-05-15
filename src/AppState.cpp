@@ -186,6 +186,67 @@ void AppState::runScriptAction(const QString &name, const QString &command, cons
     emit commandTriggered(QString("Script Run: %1").arg(name));
 }
 
+void AppState::startModule(const QString &moduleName)
+{
+    static const QMap<QString, QString> moduleScripts = {
+        {"ODIN",            "/home/jetson/Zenith_ws/scripts/modules/start_odin.sh"},
+        {"OAK_VIO",         "/home/jetson/Zenith_ws/scripts/modules/start_oakvio.sh"},
+        {"D435i",           "/home/jetson/Zenith_ws/scripts/modules/start_d435i.sh"},
+        {"Zenith_ODIN",     "/home/jetson/Zenith_ws/scripts/modules/start_zenith_control.sh /home/jetson/Zenith_ws/src/zenith_control/launch/profiles/indoor_odin.yaml"},
+        {"Zenith_OAKVIO",   "/home/jetson/Zenith_ws/scripts/modules/start_zenith_control.sh /home/jetson/Zenith_ws/src/zenith_control/launch/profiles/indoor_vins.yaml"},
+        {"Zenith_OPENVINS", "/home/jetson/Zenith_ws/scripts/modules/start_zenith_control.sh /home/jetson/Zenith_ws/src/zenith_control/launch/profiles/indoor_openvins.yaml"},
+        {"RESTART_FCU",     "/home/jetson/Zenith_ws/scripts/modules/restart_fcu.sh"},
+    };
+
+    const QString script = moduleScripts.value(moduleName);
+    if (script.isEmpty()) return;
+
+    m_commandDispatcher->executeRemoteCommand(moduleName, script);
+    emit commandTriggered(QString("StartModule: %1").arg(moduleName));
+}
+
+void AppState::stopModule(const QString &moduleName)
+{
+    static const QMap<QString, QString> moduleNodePatterns = {
+        {"ODIN",            "odin1"},
+        {"OAK_VIO",         "oakchina_vio"},
+        {"D435i",           "realsense2_camera"},
+        {"Zenith_Control",  "uav_control_main"},
+    };
+
+    const QString pattern = moduleNodePatterns.value(moduleName);
+    if (pattern.isEmpty()) return;
+
+    m_commandDispatcher->stopRemoteModule(moduleName, pattern);
+    emit commandTriggered(QString("StopModule: %1").arg(moduleName));
+}
+
+void AppState::executeRemoteCommand(const QString &name, const QString &command)
+{
+    m_commandDispatcher->executeRemoteCommand(name, command);
+    emit commandTriggered(QString("RemoteExec: %1").arg(name));
+}
+
+bool AppState::isModuleRunning(const QString &nodePattern) const
+{
+    const QStringList nodes = m_telemetryStore->runningNodes();
+    for (const auto &n : nodes) {
+        if (n.contains(nodePattern))
+            return true;
+    }
+    return false;
+}
+
+QStringList AppState::runningNodes() const
+{
+    return m_telemetryStore->runningNodes();
+}
+
+QString AppState::moduleExecFeedback() const
+{
+    return m_telemetryStore->moduleExecFeedback();
+}
+
 void AppState::armVehicle(bool arm)
 {
     m_commandDispatcher->armVehicle(arm);

@@ -17,6 +17,8 @@ public:
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);
     Q_INVOKABLE void switchLocationSource(int sourceIndex);
+    Q_INVOKABLE void executeRemoteCommand(const QString &moduleName, const QString &command);
+    Q_INVOKABLE void stopRemoteModule(const QString &moduleName, const QString &nodePattern);
 
 private:
     void sendUavCommand(const QVariantMap &payload, const QString &humanReadableName);

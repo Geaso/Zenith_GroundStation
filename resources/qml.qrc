@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
+        <file alias="Zenith.png">Zenith.png</file>
         <file>../qml/Main.qml</file>
         <file>../qml/components/InfoCard.qml</file>
         <file>../qml/components/MetricTile.qml</file>
@@ -7,6 +8,7 @@
         <file>../qml/components/PrimaryButton.qml</file>
         <file>../qml/components/StatusPill.qml</file>
         <file>../qml/pages/OverviewPage.qml</file>
+        <file>../qml/pages/ModulesPage.qml</file>
         <file>../qml/pages/ScriptsPage.qml</file>
         <file>../qml/pages/ParamsPage.qml</file>
     </qresource>

@@ -75,6 +75,8 @@ class AppState : public QObject
     Q_PROPERTY(QString recordingFile READ recordingFile NOTIFY recordingChanged)
     Q_PROPERTY(int recordingSamples READ recordingSamples NOTIFY telemetryChanged)
     Q_PROPERTY(double recordingElapsed READ recordingElapsed NOTIFY telemetryChanged)
+    Q_PROPERTY(QStringList runningNodes READ runningNodes NOTIFY telemetryChanged)
+    Q_PROPERTY(QString moduleExecFeedback READ moduleExecFeedback NOTIFY telemetryChanged)
 public:
     explicit AppState(QObject *parent = nullptr);
     ~AppState() override;
@@ -153,6 +155,14 @@ public:
     Q_INVOKABLE void requestParams(int module);
     Q_INVOKABLE void uploadDirtyParams();
     Q_INVOKABLE QObject *paramStore() const;
+
+    // Module management (remote execution via bridge)
+    Q_INVOKABLE void startModule(const QString &moduleName);
+    Q_INVOKABLE void stopModule(const QString &moduleName);
+    Q_INVOKABLE void executeRemoteCommand(const QString &name, const QString &command);
+    Q_INVOKABLE bool isModuleRunning(const QString &nodePattern) const;
+    QStringList runningNodes() const;
+    QString moduleExecFeedback() const;
 
     // Connection profile persistence
     Q_INVOKABLE QVariantList connectionProfiles() const;

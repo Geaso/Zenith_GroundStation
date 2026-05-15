@@ -32,10 +32,12 @@ ApplicationWindow {
                     anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
                     anchors.leftMargin: 14; spacing: 10
 
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter; spacing: 1
-                        Text { text: "ZENITH"; color: "#58A6FF"; font.pixelSize: 17; font.bold: true; font.letterSpacing: 3 }
-                        Text { text: "Ground Station"; color: "#6E7681"; font.pixelSize: 8; font.letterSpacing: 1 }
+                    Image {
+                        source: "qrc:/Zenith.png"
+                        width: 36; height: 36
+                        fillMode: Image.PreserveAspectFit
+                        anchors.verticalCenter: parent.verticalCenter
+                        smooth: true; mipmap: true
                     }
 
                     Rectangle { width: 1; height: 26; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
@@ -62,7 +64,7 @@ ApplicationWindow {
                 Row {
                     anchors.centerIn: parent; spacing: 4
                     Repeater {
-                        model: [ { label: "概览", page: 0 }, { label: "脚本", page: 1 }, { label: "参数", page: 2 } ]
+                        model: [ { label: "概览", page: 0 }, { label: "模块", page: 1 }, { label: "脚本", page: 2 }, { label: "参数", page: 3 } ]
                         delegate: Button {
                             implicitWidth: 60; implicitHeight: 26; text: modelData.label
                             onClicked: window.currentPage = modelData.page
@@ -150,7 +152,8 @@ ApplicationWindow {
             anchors.fill: parent
             anchors.margins: 10
             sourceComponent: window.currentPage === 0 ? overviewPage
-                             : window.currentPage === 1 ? scriptsPage
+                             : window.currentPage === 1 ? modulesPage
+                             : window.currentPage === 2 ? scriptsPage
                              : paramsPage
         }
     }
@@ -292,24 +295,6 @@ ApplicationWindow {
                                     color: chipMA.containsMouse ? "#30363D" : "#161B22"
                                     border.color: "#30363D"
 
-                                    Row {
-                                        id: chipRow; anchors.centerIn: parent; spacing: 6
-                                        Column {
-                                            anchors.verticalCenter: parent.verticalCenter; spacing: 1
-                                            Text { text: modelData.name; color: "#E6EDF3"; font.pixelSize: 11; font.bold: true }
-                                            Text { text: modelData.ip + ":" + modelData.tcp; color: "#6E7681"; font.pixelSize: 9 }
-                                        }
-                                        // Delete button
-                                        Text {
-                                            text: "\u00D7"; color: "#6E7681"; font.pixelSize: 14
-                                            anchors.verticalCenter: parent.verticalCenter
-                                            MouseArea {
-                                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                                                onClicked: appState.deleteConnectionProfile(modelData.name)
-                                            }
-                                        }
-                                    }
-
                                     MouseArea {
                                         id: chipMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                         onClicked: {
@@ -318,6 +303,29 @@ ApplicationWindow {
                                             udpField.text = String(modelData.udp)
                                             tcpField.text = String(modelData.tcp)
                                             heartbeatField.text = String(modelData.heartbeat)
+                                        }
+                                    }
+
+                                    Row {
+                                        id: chipRow; anchors.centerIn: parent; spacing: 6
+                                        Column {
+                                            anchors.verticalCenter: parent.verticalCenter; spacing: 1
+                                            Text { text: modelData.name; color: "#E6EDF3"; font.pixelSize: 11; font.bold: true }
+                                            Text { text: modelData.ip + ":" + modelData.tcp; color: "#6E7681"; font.pixelSize: 9 }
+                                        }
+                                        // Delete button
+                                        Rectangle {
+                                            width: 18; height: 18; radius: 4
+                                            color: delMA.containsMouse ? "#F8514933" : "transparent"
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: "\u00D7"; color: delMA.containsMouse ? "#F85149" : "#6E7681"; font.pixelSize: 14
+                                            }
+                                            MouseArea {
+                                                id: delMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                onClicked: appState.deleteConnectionProfile(modelData.name)
+                                            }
                                         }
                                     }
                                 }
@@ -442,6 +450,7 @@ ApplicationWindow {
     } // Dialog
 
     Component { id: overviewPage; OverviewPage { } }
+    Component { id: modulesPage; ModulesPage { } }
     Component { id: scriptsPage; ScriptsPage { } }
     Component { id: paramsPage; ParamsPage { } }
 }

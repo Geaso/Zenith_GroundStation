@@ -95,6 +95,16 @@ int TelemetryStore::currentVehicleId() const
     return m_currentVehicleId;
 }
 
+QStringList TelemetryStore::runningNodes() const
+{
+    return m_runningNodes;
+}
+
+QString TelemetryStore::moduleExecFeedback() const
+{
+    return m_moduleExecFeedback;
+}
+
 void TelemetryStore::setVehicleName(const QString &name)
 {
     bool ok = false;
@@ -200,6 +210,14 @@ void TelemetryStore::applyTextInfo(const QVariantMap &payload)
         return;
     }
 
+    // 拦截模块执行反馈: "MODULE_EXEC:..."
+    if (message.startsWith(QLatin1String("MODULE_EXEC:"))) {
+        m_moduleExecFeedback = message;
+        m_commandAck = message;
+        emit telemetryChanged();
+        return;
+    }
+
     m_flightStatus = message;
     switch (messageType) {
     case 0:
@@ -266,6 +284,18 @@ void TelemetryStore::applyHeartbeat(const QVariantMap &payload)
     if (!payload.value("message").toString().isEmpty()) {
         m_commandAck = payload.value("message").toString();
     }
+
+    // 提取 ROS 节点列表 (heartbeat 中以 "rosnode" 或 "nodes" 字段传递)
+    if (payload.contains("nodes")) {
+        const QVariantList nodeList = payload.value("nodes").toList();
+        m_runningNodes.clear();
+        for (const auto &n : nodeList)
+            m_runningNodes.append(n.toString());
+    } else if (payload.contains("rosnode")) {
+        const QString nodesStr = payload.value("rosnode").toString();
+        m_runningNodes = nodesStr.split(',', Qt::SkipEmptyParts);
+    }
+
     m_connected = true;
     emit telemetryChanged();
 }

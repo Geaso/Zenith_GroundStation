@@ -2,6 +2,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
+#include <QIcon>
 
 #include "AppState.h"
 #include "ScriptActionModel.h"
@@ -12,6 +13,7 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("Zenith Ground Station");
     QGuiApplication::setOrganizationName("AMOVLAB");
+    QGuiApplication::setWindowIcon(QIcon(":/Zenith.png"));
     QQuickStyle::setStyle("Basic");
 
     AppState appState;

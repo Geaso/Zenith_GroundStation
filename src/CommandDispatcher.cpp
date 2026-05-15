@@ -195,6 +195,31 @@ void CommandDispatcher::switchLocationSource(int sourceIndex)
     m_telemetryStore->setCommandFeedback(QString("LocationSource: %1").arg(name), "ParamSettings queued");
 }
 
+void CommandDispatcher::executeRemoteCommand(const QString &moduleName, const QString &command)
+{
+    if (!m_protocolClient->isConnected()) {
+        m_telemetryStore->setCommandFeedback(QString("RemoteExec: %1").arg(moduleName), "Blocked: TCP not connected");
+        return;
+    }
+
+    QVariantMap payload;
+    payload.insert("mode", ZenithProtocol::CUSTOMMODE_MODE);
+    payload.insert("selectId", QVariantList{m_telemetryStore->currentVehicleId()});
+    payload.insert("use_mode", ZenithProtocol::UM_CREATE);
+    payload.insert("is_simulation", false);
+    payload.insert("swarm_num", 1);
+    payload.insert("cmd", QStringLiteral("remote_exec:") + command);
+
+    m_protocolClient->sendTcpMessage(ZenithProtocol::MODESELECTION, payload, m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback(QString("RemoteExec: %1").arg(moduleName), "Command sent");
+}
+
+void CommandDispatcher::stopRemoteModule(const QString &moduleName, const QString &nodePattern)
+{
+    executeRemoteCommand(QString("Stop %1").arg(moduleName),
+                         QStringLiteral("/home/jetson/Zenith_ws/scripts/modules/stop_module.sh ") + nodePattern);
+}
+
 void CommandDispatcher::sendUavCommand(const QVariantMap &payload, const QString &humanReadableName)
 {
     m_protocolClient->sendTcpMessage(ZenithProtocol::UAVCOMMAND, payload, m_telemetryStore->currentVehicleId());
