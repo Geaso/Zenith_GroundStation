@@ -22,6 +22,8 @@ public:
     bool requestActive() const;
     QString locationSource() const;
     QString gpsStatus() const;
+    int gpsFixType() const;
+    int locationSourceId() const;
     QString heartbeatLink() const;
     QString videoLink() const;
     QString rcLink() const;
@@ -96,6 +98,8 @@ private:
     bool m_requestActive = false;
     QString m_locationSource;
     QString m_gpsStatus;
+    int m_gpsFixType = 0;       // raw gps_status integer (0=NO_GPS .. 6=RTK_FIXED)
+    int m_locationSourceId = 0; // raw location_source integer (0=GPS,1=RTK,2=VINS,...)
     QString m_heartbeatLink;
     QString m_videoLink;
     QString m_rcLink;

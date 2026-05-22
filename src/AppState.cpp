@@ -115,6 +115,8 @@ QString AppState::pendingRequest() const { return m_pendingRequest; }
 bool AppState::requestActive() const { return m_requestActive; }
 QString AppState::locationSource() const { return m_locationSource; }
 QString AppState::gpsStatus() const { return m_gpsStatus; }
+int AppState::gpsFix() const { return m_gpsFixType; }
+int AppState::locationSourceId() const { return m_locationSourceId; }
 QString AppState::heartbeatLink() const { return m_heartbeatLink; }
 QString AppState::videoLink() const { return m_videoLink; }
 QString AppState::rcLink() const { return m_rcLink; }
@@ -371,6 +373,8 @@ void AppState::syncFromStore()
     m_requestActive = m_telemetryStore->requestActive();
     m_locationSource = m_telemetryStore->locationSource();
     m_gpsStatus = m_telemetryStore->gpsStatus();
+    m_gpsFixType = m_telemetryStore->gpsFixType();
+    m_locationSourceId = m_telemetryStore->locationSourceId();
     m_heartbeatLink = m_telemetryStore->heartbeatLink();
     m_videoLink = m_telemetryStore->videoLink();
     m_rcLink = m_telemetryStore->rcLink();

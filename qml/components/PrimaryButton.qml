@@ -6,15 +6,16 @@ Button {
     property color fillColor: "#2F6BFF"
     property color textColor: "#FFFFFF"
 
-    implicitHeight: 42
-    implicitWidth: 132
+    implicitHeight: 32
+    implicitWidth: 120
 
-    opacity: root.enabled ? 1.0 : 0.4
+    opacity: root.enabled ? 1.0 : 0.35
 
     background: Rectangle {
-        radius: 12
-        color: root.down ? Qt.darker(root.fillColor, 1.08) : root.fillColor
-        border.color: Qt.darker(root.fillColor, 1.12)
+        radius: 6
+        color: root.down ? Qt.darker(root.fillColor, 1.12) : root.hovered ? Qt.lighter(root.fillColor, 1.08) : root.fillColor
+        border.color: Qt.darker(root.fillColor, 1.15)
+        Behavior on color { ColorAnimation { duration: 120 } }
     }
 
     contentItem: Text {
@@ -22,7 +23,7 @@ Button {
         color: root.textColor
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
-        font.pixelSize: 14
+        font.pixelSize: 12
         font.bold: true
     }
 }

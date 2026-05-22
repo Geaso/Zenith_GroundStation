@@ -3,13 +3,36 @@
 #include <QQmlContext>
 #include <QQuickStyle>
 #include <QIcon>
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
 
 #include "AppState.h"
 #include "ScriptActionModel.h"
 #include "ZenithProtocolProfile.h"
 
+static QFile logFile;
+
+void messageHandler(QtMsgType type, const QMessageLogContext &ctx, const QString &msg)
+{
+    QTextStream out(&logFile);
+    out << QDateTime::currentDateTime().toString("hh:mm:ss.zzz") << " ";
+    switch (type) {
+    case QtDebugMsg:    out << "DBG "; break;
+    case QtInfoMsg:     out << "INF "; break;
+    case QtWarningMsg:  out << "WRN "; break;
+    case QtCriticalMsg: out << "CRT "; break;
+    case QtFatalMsg:    out << "FTL "; break;
+    }
+    out << msg << "\n";
+    out.flush();
+}
+
 int main(int argc, char *argv[])
 {
+    logFile.setFileName("zenith_debug.log");
+    logFile.open(QIODevice::WriteOnly | QIODevice::Truncate);
+    qInstallMessageHandler(messageHandler);
     QGuiApplication app(argc, argv);
     QGuiApplication::setApplicationName("Zenith Ground Station");
     QGuiApplication::setOrganizationName("AMOVLAB");

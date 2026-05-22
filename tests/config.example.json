@@ -1,0 +1,5 @@
+{
+    "jetson_ip":   "192.168.82.XXX",
+    "jetson_user": "jetson",
+    "jetson_pass": "your_password_here"
+}

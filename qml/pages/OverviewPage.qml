@@ -6,8 +6,27 @@ import "../components"
 Item {
     id: root
 
-    // ── Left sidebar view index: 0=Map  1=Video  2=Data ──
+    // ── View index: 0=Map  1=Video  2=Data ──
     property int centerView: 0
+
+    // ── Map mode: 0=ENU grid, 1=GPS tiles ──
+    // userMapPref: 0=auto, 1=forceENU, 2=forceGPS
+    property int userMapPref: 0
+    property bool hasGps: appState.connected && appState.gpsFix >= 2
+    property int effectiveMapMode: {
+        if (!hasGps) return 0                         // no GPS → ENU only
+        if (userMapPref === 1) return 0               // user forced ENU
+        return 1                                       // auto or forceGPS → GPS tiles
+    }
+
+    // ── GPS map state ──
+    property real gpsLat: 31.03
+    property real gpsLon: 121.45
+    property int gpsZoom: 16
+    property real gpsPanStartX: 0
+    property real gpsPanStartY: 0
+    property real gpsPanStartLat: 0
+    property real gpsPanStartLon: 0
 
     // ── Map state ──
     property real mapScale: 10.0
@@ -31,89 +50,277 @@ Item {
         spacing: 0
 
         // ═══════════════════════════════════════
-        //  Left: Icon Sidebar  (56px)
-        // ═══════════════════════════════════════
-        Rectangle {
-            width: 56
-            height: parent.height
-            color: "#161B22"
-            radius: 10
-
-            Column {
-                anchors.fill: parent
-                anchors.topMargin: 8
-                spacing: 4
-
-                SidebarIcon {
-                    icon: "🗺"
-                    label: "地图"
-                    active: centerView === 0
-                    onClicked: centerView = 0
-                }
-                SidebarIcon {
-                    icon: "📹"
-                    label: "视频"
-                    active: centerView === 1
-                    onClicked: centerView = 1
-                }
-                SidebarIcon {
-                    icon: "📊"
-                    label: "数据"
-                    active: centerView === 2
-                    onClicked: centerView = 2
-                }
-            }
-        }
-
-        Item { width: 8; height: 1 }
-
-        // ═══════════════════════════════════════
         //  Center: Map / Video / Data
         // ═══════════════════════════════════════
         Rectangle {
             id: centerArea
-            width: parent.width - 56 - 250 - 24
+            width: parent.width - 258
             height: parent.height
             radius: 10
             color: "#0D1117"
             border.color: "#21262D"
             clip: true
 
+            // ── Floating View Tabs (top-right, z above map) ──
+            Row {
+                anchors.top: parent.top; anchors.right: parent.right
+                anchors.topMargin: 8; anchors.rightMargin: 8
+                spacing: 4; z: 20
+
+                Repeater {
+                    model: [
+                        { label: "地图", view: 0 },
+                        { label: "视频", view: 1 },
+                        { label: "数据", view: 2 }
+                    ]
+                    delegate: Rectangle {
+                        width: 42; height: 22; radius: 4
+                        color: centerView === modelData.view ? "#1F6FEB" : "#21262DCC"
+                        border.color: centerView === modelData.view ? "#1F6FEB" : "#30363D"
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: centerView === modelData.view ? "#FFFFFF" : "#8B949E"
+                            font.pixelSize: 10; font.bold: true
+                        }
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: centerView = modelData.view }
+                    }
+                }
+            }
+
             // ── Map View ──
             Item {
                 anchors.fill: parent
                 visible: centerView === 0
 
-                // Map title bar
+                // Floating map toolbar (top-right, below view tabs)
+                Row {
+                    anchors.top: parent.top; anchors.right: parent.right
+                    anchors.topMargin: 38; anchors.rightMargin: 8
+                    spacing: 4; z: 15
+
+                    MapBtn { text: "+";   onClicked: { mapScale = Math.min(80, mapScale * 1.3); mapCanvas.requestPaint() } }
+                    MapBtn { text: "-";   onClicked: { mapScale = Math.max(1, mapScale / 1.3); mapCanvas.requestPaint() } }
+                    MapBtn { text: "UAV"; onClicked: { mapCenterX = appState.positionX; mapCenterY = appState.positionY; mapCanvas.requestPaint() } }
+                    MapBtn { text: "原点"; onClicked: { mapCenterX = 0; mapCenterY = 0; mapCanvas.requestPaint() } }
+                    MapBtn { text: waypointPanelVisible ? "隐藏航点" : "航点"; onClicked: waypointPanelVisible = !waypointPanelVisible }
+                }
+
+                // ── Floating HUD overlay (top-left) ──
                 Rectangle {
-                    id: mapHeader
-                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-                    height: 34; color: "transparent"; z: 10
+                    id: hudOverlay
+                    anchors.top: parent.top; anchors.left: parent.left
+                    anchors.topMargin: 8; anchors.leftMargin: 8
+                    width: hudRow.width + 20; height: 32; radius: 6
+                    color: "#161B22DD"; border.color: "#30363D80"
+                    z: 16
 
                     Row {
-                        anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                        anchors.leftMargin: 12; spacing: 12
-                        Text { text: "ENU 地图"; color: "#8B949E"; font.pixelSize: 11; font.bold: true }
-                        Text { text: "1m = " + mapScale.toFixed(0) + "px"; color: "#6E7681"; font.pixelSize: 9 }
-                        Text { text: "(" + mapCenterX.toFixed(1) + ", " + mapCenterY.toFixed(1) + ")"; color: "#6E7681"; font.pixelSize: 9 }
-                    }
+                        id: hudRow; anchors.centerIn: parent; spacing: 14
 
-                    Row {
-                        anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                        anchors.rightMargin: 12; spacing: 4
-
-                        MapBtn { text: "+";   onClicked: { mapScale = Math.min(80, mapScale * 1.3); mapCanvas.requestPaint() } }
-                        MapBtn { text: "-";   onClicked: { mapScale = Math.max(1, mapScale / 1.3); mapCanvas.requestPaint() } }
-                        MapBtn { text: "UAV"; onClicked: { mapCenterX = appState.positionX; mapCenterY = appState.positionY; mapCanvas.requestPaint() } }
-                        MapBtn { text: "原点"; onClicked: { mapCenterX = 0; mapCenterY = 0; mapCanvas.requestPaint() } }
-                        MapBtn { text: waypointPanelVisible ? "隐藏航点" : "航点面板"; onClicked: waypointPanelVisible = !waypointPanelVisible }
+                        Row {
+                            spacing: 3; anchors.verticalCenter: parent.verticalCenter
+                            Text { text: "ALT"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? Number(appState.positionZ).toFixed(1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "m"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+                        Row {
+                            spacing: 3; anchors.verticalCenter: parent.verticalCenter
+                            Text { text: "SPD"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? Number(appState.speed).toFixed(1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "m/s"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+                        Row {
+                            spacing: 3; anchors.verticalCenter: parent.verticalCenter
+                            Text { text: "VSPD"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? Number(appState.velocityZ).toFixed(1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+                        Row {
+                            spacing: 3; anchors.verticalCenter: parent.verticalCenter
+                            Text { text: "HDG"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? Number(appState.yaw).toFixed(0) : "0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "\u00B0"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+                        Row {
+                            spacing: 3; anchors.verticalCenter: parent.verticalCenter
+                            Text { text: "BAT"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? Number(appState.batteryVoltage).toFixed(1) : "0.0"; color: appState.batteryPercent < 0.2 ? "#F85149" : "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "V"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
+                        }
                     }
                 }
 
+                // ── PFD Attitude Indicator (below HUD) ──
+                Canvas {
+                    id: pfdCanvas
+                    anchors.top: hudOverlay.bottom; anchors.left: parent.left
+                    anchors.topMargin: 8; anchors.leftMargin: 8
+                    width: 130; height: 130; z: 16
+
+                    Connections {
+                        target: appState
+                        function onTelemetryChanged() { pfdCanvas.requestPaint() }
+                    }
+
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.reset()
+
+                        var cx = width / 2, cy = height / 2, r = 58
+                        var rollDeg = appState.roll || 0
+                        var pitchDeg = appState.pitch || 0
+                        var rollRad = rollDeg * Math.PI / 180
+                        var pitchPx = pitchDeg * (r / 30) // 30 deg = full radius
+
+                        // Clip circle
+                        ctx.save()
+                        ctx.beginPath()
+                        ctx.arc(cx, cy, r, 0, Math.PI * 2)
+                        ctx.clip()
+
+                        // Sky + Ground (rotated by roll, shifted by pitch)
+                        ctx.save()
+                        ctx.translate(cx, cy)
+                        ctx.rotate(-rollRad)
+
+                        // Sky
+                        ctx.fillStyle = "#1A4B8C"
+                        ctx.fillRect(-r * 2, -r * 2 + pitchPx, r * 4, r * 2)
+                        // Ground
+                        ctx.fillStyle = "#6B4226"
+                        ctx.fillRect(-r * 2, pitchPx, r * 4, r * 2)
+                        // Horizon line
+                        ctx.strokeStyle = "#FFFFFF"
+                        ctx.lineWidth = 1.5
+                        ctx.beginPath()
+                        ctx.moveTo(-r * 2, pitchPx)
+                        ctx.lineTo(r * 2, pitchPx)
+                        ctx.stroke()
+
+                        // Pitch ladder (every 10 degrees)
+                        ctx.strokeStyle = "#FFFFFFAA"
+                        ctx.fillStyle = "#FFFFFFCC"
+                        ctx.font = "8px Consolas"
+                        ctx.textAlign = "center"
+                        ctx.lineWidth = 1
+                        for (var p = -30; p <= 30; p += 10) {
+                            if (p === 0) continue
+                            var py = pitchPx - p * (r / 30)
+                            var lw = 18
+                            ctx.beginPath()
+                            ctx.moveTo(-lw, py); ctx.lineTo(lw, py)
+                            ctx.stroke()
+                            ctx.fillText(Math.abs(p).toString(), lw + 10, py + 3)
+                        }
+
+                        ctx.restore()
+
+                        // Roll indicator arc (fixed at top)
+                        ctx.strokeStyle = "#FFFFFF80"
+                        ctx.lineWidth = 1
+                        ctx.beginPath()
+                        ctx.arc(cx, cy, r - 4, Math.PI * 1.2, Math.PI * 1.8)
+                        ctx.stroke()
+
+                        // Roll triangle pointer
+                        ctx.save()
+                        ctx.translate(cx, cy)
+                        ctx.rotate(-rollRad)
+                        ctx.fillStyle = "#FFFFFFCC"
+                        ctx.beginPath()
+                        ctx.moveTo(0, -(r - 4))
+                        ctx.lineTo(-5, -(r - 12))
+                        ctx.lineTo(5, -(r - 12))
+                        ctx.closePath()
+                        ctx.fill()
+                        ctx.restore()
+
+                        // Center aircraft symbol (fixed)
+                        ctx.strokeStyle = "#FFD700"
+                        ctx.lineWidth = 2.5
+                        ctx.beginPath()
+                        ctx.moveTo(cx - 22, cy); ctx.lineTo(cx - 8, cy)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.moveTo(cx + 8, cy); ctx.lineTo(cx + 22, cy)
+                        ctx.stroke()
+                        ctx.beginPath()
+                        ctx.arc(cx, cy, 3, 0, Math.PI * 2)
+                        ctx.stroke()
+
+                        ctx.restore()
+
+                        // Outer ring
+                        ctx.strokeStyle = "#30363D"
+                        ctx.lineWidth = 2
+                        ctx.beginPath()
+                        ctx.arc(cx, cy, r + 2, 0, Math.PI * 2)
+                        ctx.stroke()
+
+                        // Heading readout at bottom
+                        ctx.fillStyle = "#161B22DD"
+                        ctx.fillRect(cx - 22, cy + r - 6, 44, 16)
+                        ctx.fillStyle = "#E6EDF3"
+                        ctx.font = "bold 10px Consolas"
+                        ctx.textAlign = "center"
+                        ctx.fillText((appState.yaw || 0).toFixed(0) + "\u00B0", cx, cy + r + 6)
+                    }
+                }
+
+                // Map mode label (below PFD)
+                Row {
+                    id: mapModeLabel
+                    anchors.top: pfdCanvas.bottom; anchors.left: parent.left
+                    anchors.topMargin: 4; anchors.leftMargin: 12
+                    spacing: 8; z: 15
+                    Text { text: effectiveMapMode === 0 ? "ENU" : "GPS"; color: "#58A6FF"; font.pixelSize: 10; font.bold: true }
+                    Text { text: effectiveMapMode === 0 ? "1m=" + mapScale.toFixed(0) + "px" : "Z" + gpsZoom; color: "#6E7681"; font.pixelSize: 9 }
+                }
+
+                // ── Map Mode Switcher (bottom-left) ──
+                Rectangle {
+                    anchors.left: parent.left; anchors.bottom: parent.bottom
+                    anchors.leftMargin: waypointPanelVisible ? 234 : 8; anchors.bottomMargin: 8
+                    width: switchRow.width + 12; height: 26; radius: 5
+                    color: "#161B22DD"; border.color: "#30363D80"
+                    z: 18
+
+                    Row {
+                        id: switchRow; anchors.centerIn: parent; spacing: 4
+                        Rectangle {
+                            width: 38; height: 20; radius: 4
+                            color: effectiveMapMode === 0 ? "#1F6FEB" : (enuMA.containsMouse ? "#30363D" : "transparent")
+                            Text { anchors.centerIn: parent; text: "ENU"; color: effectiveMapMode === 0 ? "#FFF" : "#8B949E"; font.pixelSize: 9; font.bold: true }
+                            MouseArea { id: enuMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: userMapPref = 1 }
+                        }
+                        Rectangle {
+                            width: 38; height: 20; radius: 4
+                            color: effectiveMapMode === 1 ? "#1F6FEB" : (gpsMA.containsMouse && hasGps ? "#30363D" : "transparent")
+                            opacity: hasGps ? 1.0 : 0.35
+                            Text { anchors.centerIn: parent; text: "GPS"; color: effectiveMapMode === 1 ? "#FFF" : "#8B949E"; font.pixelSize: 9; font.bold: true }
+                            MouseArea { id: gpsMA; anchors.fill: parent; hoverEnabled: true; cursorShape: hasGps ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: { if (hasGps) userMapPref = 2 } }
+                        }
+                        Rectangle {
+                            width: 38; height: 20; radius: 4
+                            color: userMapPref === 0 ? "#1F6FEB40" : (autoMA.containsMouse ? "#30363D" : "transparent")
+                            border.color: userMapPref === 0 ? "#1F6FEB" : "transparent"
+                            Text { anchors.centerIn: parent; text: "Auto"; color: userMapPref === 0 ? "#58A6FF" : "#6E7681"; font.pixelSize: 9; font.bold: true }
+                            MouseArea { id: autoMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: userMapPref = 0 }
+                        }
+                    }
+                }
+
+                // ═══════════════════════════════════════
+                //  ENU Grid Canvas
+                // ═══════════════════════════════════════
                 Canvas {
                     id: mapCanvas
                     anchors.fill: parent
-                    anchors.topMargin: 34
+                    visible: effectiveMapMode === 0
 
                     Connections {
                         target: appState
@@ -305,6 +512,143 @@ Item {
                     }
                 }
 
+                // ═══════════════════════════════════════
+                //  GPS Tile Map (OSM tiles via HTTP)
+                // ═══════════════════════════════════════
+                Item {
+                    id: gpsTileMap
+                    anchors.fill: parent
+                    visible: effectiveMapMode === 1
+                    clip: true
+
+                    // Tile math functions
+                    function lon2tileX(lon, z) { return (lon + 180.0) / 360.0 * Math.pow(2, z) }
+                    function lat2tileY(lat, z) {
+                        var r = lat * Math.PI / 180.0
+                        return (1.0 - Math.log(Math.tan(r) + 1.0 / Math.cos(r)) / Math.PI) / 2.0 * Math.pow(2, z)
+                    }
+                    function tileX2lon(x, z) { return x / Math.pow(2, z) * 360.0 - 180.0 }
+                    function tileY2lat(y, z) {
+                        var n = Math.PI - 2.0 * Math.PI * y / Math.pow(2, z)
+                        return 180.0 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
+                    }
+
+                    // Current center in tile-float coords
+                    property real txf: lon2tileX(gpsLat !== 0 ? gpsLon : 121.45, gpsZoom)
+                    property real tyf: lat2tileY(gpsLat !== 0 ? gpsLat : 31.03, gpsZoom)
+                    property int baseTX: Math.floor(txf)
+                    property int baseTY: Math.floor(tyf)
+                    property real fracX: txf - baseTX
+                    property real fracY: tyf - baseTY
+
+                    property int tilesH: Math.ceil(width / 256) + 2
+                    property int tilesV: Math.ceil(height / 256) + 2
+
+                    // Tile grid
+                    Repeater {
+                        model: gpsTileMap.tilesH * gpsTileMap.tilesV
+                        delegate: Image {
+                            property int col: (index % gpsTileMap.tilesH) - Math.floor(gpsTileMap.tilesH / 2)
+                            property int row: Math.floor(index / gpsTileMap.tilesH) - Math.floor(gpsTileMap.tilesV / 2)
+                            property int tx: gpsTileMap.baseTX + col
+                            property int ty: gpsTileMap.baseTY + row
+                            property int maxTile: Math.pow(2, gpsZoom) - 1
+
+                            x: gpsTileMap.width / 2 + (col - gpsTileMap.fracX) * 256
+                            y: gpsTileMap.height / 2 + (row - gpsTileMap.fracY) * 256
+                            width: 256; height: 256
+
+                            source: (tx >= 0 && ty >= 0 && tx <= maxTile && ty <= maxTile)
+                                    ? "https://tile.openstreetmap.org/" + gpsZoom + "/" + tx + "/" + ty + ".png"
+                                    : ""
+                            asynchronous: true; cache: true
+                            fillMode: Image.PreserveAspectFit
+                            opacity: status === Image.Ready ? 1.0 : 0.3
+
+                            Rectangle {
+                                anchors.fill: parent; color: "#0D1117"
+                                visible: parent.status !== Image.Ready
+                                Text { anchors.centerIn: parent; text: parent.tx + "/" + parent.ty; color: "#30363D"; font.pixelSize: 9 }
+                            }
+                        }
+                    }
+
+                    // UAV marker overlay on GPS map
+                    Canvas {
+                        id: gpsOverlayCanvas
+                        anchors.fill: parent; z: 5
+
+                        Connections {
+                            target: appState
+                            function onTelemetryChanged() { gpsOverlayCanvas.requestPaint() }
+                        }
+
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.reset()
+
+                            // For now, UAV is at center (lat/lon matches GPS position)
+                            // TODO: convert actual lat/lon when available from telemetry
+                            var cx = width / 2, cy = height / 2
+                            var headingRad = (appState.yaw || 0) * Math.PI / 180
+
+                            // UAV triangle marker
+                            ctx.save()
+                            ctx.translate(cx, cy)
+                            ctx.rotate(-(headingRad - Math.PI / 2))
+                            var sz = 14
+                            ctx.fillStyle = "#F85149"
+                            ctx.beginPath()
+                            ctx.moveTo(0, -sz)
+                            ctx.lineTo(-sz * 0.6, sz * 0.5)
+                            ctx.lineTo(sz * 0.6, sz * 0.5)
+                            ctx.closePath()
+                            ctx.fill()
+                            ctx.fillStyle = "#FFFFFF"
+                            ctx.beginPath(); ctx.arc(0, 0, 3, 0, Math.PI * 2); ctx.fill()
+                            ctx.restore()
+
+                            // Position label
+                            ctx.fillStyle = "#161B22CC"
+                            ctx.fillRect(cx + 18, cy - 10, 120, 20)
+                            ctx.fillStyle = "#E6EDF3"; ctx.font = "10px Consolas"; ctx.textAlign = "left"
+                            ctx.fillText(gpsLat.toFixed(5) + ", " + gpsLon.toFixed(5), cx + 22, cy + 4)
+                        }
+                    }
+
+                    // GPS map pan/zoom mouse area
+                    MouseArea {
+                        anchors.fill: parent; z: 4
+                        hoverEnabled: true
+                        property bool isPanning: false
+
+                        onPressed: function(mouse) {
+                            isPanning = true
+                            gpsPanStartX = mouse.x; gpsPanStartY = mouse.y
+                            gpsPanStartLat = gpsLat; gpsPanStartLon = gpsLon
+                        }
+                        onPositionChanged: function(mouse) {
+                            if (isPanning) {
+                                var dxPx = mouse.x - gpsPanStartX
+                                var dyPx = mouse.y - gpsPanStartY
+                                var lonPerPx = 360.0 / (Math.pow(2, gpsZoom) * 256)
+                                gpsLon = gpsPanStartLon - dxPx * lonPerPx
+                                // Latitude: approximate using same scale (Mercator distortion ignored for small pans)
+                                var latRad = gpsPanStartLat * Math.PI / 180
+                                var latPerPx = lonPerPx * Math.cos(latRad)
+                                gpsLat = gpsPanStartLat + dyPx * latPerPx
+                            }
+                        }
+                        onReleased: function(mouse) { isPanning = false }
+                        onWheel: function(wheel) {
+                            if (wheel.angleDelta.y > 0)
+                                gpsZoom = Math.min(18, gpsZoom + 1)
+                            else
+                                gpsZoom = Math.max(2, gpsZoom - 1)
+                        }
+                    }
+                }
+
                 // Legend
                 Row {
                     anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 12
@@ -328,8 +672,8 @@ Item {
                 // ── Waypoint Overlay Panel ──
                 Rectangle {
                     visible: waypointPanelVisible
-                    anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-                    anchors.topMargin: 38; anchors.leftMargin: 6; anchors.bottomMargin: 6
+                    anchors.left: parent.left; anchors.top: mapModeLabel.bottom; anchors.bottom: parent.bottom
+                    anchors.topMargin: 6; anchors.leftMargin: 6; anchors.bottomMargin: 6
                     width: 220
                     radius: 8
                     color: "#161B22"
@@ -551,111 +895,201 @@ Item {
             }
         }
 
-        Item { width: 8; height: 1 }
+        Item { width: 8; height: 1 }   // spacer
 
         // ═══════════════════════════════════════
-        //  Right: Telemetry + Controls  (250px)
+        //  Right: Dashboard Panel (250px)
         // ═══════════════════════════════════════
-        Column {
-            width: 250
-            height: parent.height
-            spacing: 6
+        Rectangle {
+            width: 250; height: parent.height
+            color: "#161B22"; radius: 8; border.color: "#21262D"
 
-            // ── Telemetry (show "--" when no telemetry link) ──
-            TelemetryGroup { title: "位置 [m]"; labels: ["X","Y","Z"]
-                values: appState.connected ? [ Number(appState.positionX).toFixed(2), Number(appState.positionY).toFixed(2), Number(appState.positionZ).toFixed(2) ] : ["--","--","--"] }
-
-            TelemetryGroup { title: "速度 [m/s]"; labels: ["X","Y","Z"]
-                values: appState.connected ? [ Number(appState.velocityX).toFixed(2), Number(appState.velocityY).toFixed(2), Number(appState.velocityZ).toFixed(2) ] : ["--","--","--"] }
-
-            TelemetryGroup { title: "姿态 [deg]"; labels: ["R","P","Y"]
-                values: appState.connected ? [ Number(appState.roll).toFixed(1), Number(appState.pitch).toFixed(1), Number(appState.yaw).toFixed(1) ] : ["--","--","--"] }
-
-            TelemetryGroup { title: "期望位置 [m]"; labels: ["X","Y","Z"]
-                values: appState.connected ? [ Number(appState.desiredPositionX).toFixed(2), Number(appState.desiredPositionY).toFixed(2), Number(appState.desiredPositionZ).toFixed(2) ] : ["--","--","--"] }
-
-            TelemetryGroup { title: "期望速度 [m/s]"; labels: ["X","Y","Z"]
-                values: appState.connected ? [ Number(appState.desiredVelocityX).toFixed(2), Number(appState.desiredVelocityY).toFixed(2), Number(appState.desiredVelocityZ).toFixed(2) ] : ["--","--","--"] }
-
-            // ── Separator ──
-            Rectangle { width: parent.width; height: 1; color: "#262C36" }
-
-            // ── Quick Commands ──
-            Rectangle {
-                width: parent.width
-                height: 134
-                radius: 8
-                color: "#161B22"
-                border.color: "#30363D"
+            Flickable {
+                anchors.fill: parent; anchors.margins: 1
+                contentHeight: dashCol.height + 16
+                clip: true; boundsBehavior: Flickable.StopAtBounds
 
                 Column {
-                    anchors.fill: parent; anchors.margins: 10; spacing: 6
-                    Text { text: "快捷指令"; color: "#9AA4B2"; font.pixelSize: 10; font.bold: true }
-                    PrimaryButton { width: parent.width; height: 26; text: "当前点悬停"; fillColor: "#1F4E8C"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
-                    PrimaryButton { width: parent.width; height: 26; text: "初始点悬停"; fillColor: "#1A5C30"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
-                    PrimaryButton { width: parent.width; height: 26; text: "降落"; fillColor: "#6E1A1A"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
-                }
-            }
+                    id: dashCol
+                    width: parent.width; padding: 10; spacing: 10
 
-            // ── Manual Control ──
-            Rectangle {
-                width: parent.width
-                height: parent.height - 5 * 68 - 134 - 1 - 7 * 6
-                radius: 8
-                color: "#161B22"
-                border.color: "#30363D"
+                    // ── Dashboard title ──
+                    Column {
+                        width: parent.width - 20; spacing: 2
+                        Text { text: "Dashboard"; color: "#E6EDF3"; font.pixelSize: 14; font.bold: true }
+                        Text { text: "Zenith 上位机状态"; color: "#6E7681"; font.pixelSize: 10 }
+                    }
 
-                Column {
-                    anchors.fill: parent; anchors.margins: 10; spacing: 8
+                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
 
-                    Text { text: "手动控制"; color: "#9AA4B2"; font.pixelSize: 10; font.bold: true }
+                    // ── FLIGHT STATUS ──
+                    Column {
+                        width: parent.width - 20; spacing: 6
+                        Text { text: "FLIGHT STATUS"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
 
-                    ComboBox {
-                        id: manualModeBox
-                        width: parent.width; height: 26
-                        model: ["XYZ_POS", "XYZ_VEL", "XYZ_POS_BODY", "LAT_LON_ALT"]
-                        background: Rectangle { radius: 5; color: "#21262D"; border.color: "#30363D" }
-                        contentItem: Text {
-                            leftPadding: 8; text: manualModeBox.currentText
-                            color: "#E6EDF3"; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter
+                        Row {
+                            width: parent.width; spacing: 8
+                            Column {
+                                spacing: 2
+                                Text { text: "Exec State"; color: "#6E7681"; font.pixelSize: 9 }
+                                Text { text: appState.connected ? appState.execState : "N/A"; color: "#E6EDF3"; font.pixelSize: 14; font.bold: true }
+                            }
+                            Item { width: parent.width - 150; height: 1 }
+                            Rectangle {
+                                width: safeBadge.width + 14; height: 22; radius: 4
+                                color: appState.failsafe ? Qt.rgba(0.973, 0.318, 0.286, 0.15) : Qt.rgba(0.247, 0.725, 0.314, 0.15)
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { id: safeBadge; anchors.centerIn: parent; text: appState.failsafe ? "FAILSAFE" : "SAFE"; color: appState.failsafe ? "#F85149" : "#3FB950"; font.pixelSize: 10; font.bold: true }
+                            }
+                        }
+
+                        Row {
+                            spacing: 16
+                            DashDot { dotColor: appState.connected && appState.heartbeatLink === "OK" ? "#3FB950" : "#F85149"; label: "Heartbeat" }
+                            DashDot { dotColor: appState.connected && appState.videoLink === "OK" ? "#3FB950" : "#484F58"; label: "Video" }
+                            DashDot { dotColor: appState.connected && appState.rcLink === "OK" ? "#3FB950" : "#484F58"; label: "RC" }
                         }
                     }
 
-                    Row {
-                        width: parent.width; spacing: 6
-                        Column {
-                            width: (parent.width - 6) / 2; spacing: 3
-                            Text { text: "X [m]"; color: "#8B949E"; font.pixelSize: 9 }
-                            MiniField { id: xField; width: parent.width; height: 26 }
-                        }
-                        Column {
-                            width: (parent.width - 6) / 2; spacing: 3
-                            Text { text: "Y [m]"; color: "#8B949E"; font.pixelSize: 9 }
-                            MiniField { id: yField; width: parent.width; height: 26 }
+                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
+
+                    // ── TELEMETRY — 2-column card grid ──
+                    Column {
+                        width: parent.width - 20; spacing: 6
+                        Text { text: "TELEMETRY"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
+
+                        Grid {
+                            columns: 2; spacing: 6; width: parent.width
+
+                            TelCard { icon: "\u2699"; iconColor: "#58A6FF"; label: "CTRL MODE"; value: appState.connected ? appState.controllerMode : "--"; unit: "" }
+                            TelCard { icon: "\u25B6"; iconColor: "#3FB950"; label: "CTRL STATE"; value: appState.connected ? appState.controlState : "--"; unit: "" }
+                            TelCard { icon: "\u2691"; iconColor: "#BC8CFF"; label: "MISSION"; value: appState.connected ? appState.missionMode : "--"; unit: "" }
+                            TelCard { icon: "\u27A4"; iconColor: "#FFA657"; label: "STAGE"; value: appState.connected ? appState.missionStage : "--"; unit: "" }
+                            TelCard { icon: "\u2295"; iconColor: "#58A6FF"; label: "LOC SRC"; value: appState.connected ? appState.locationSource : "--"; unit: "" }
+                            TelCard { icon: "\u2302"; iconColor: "#3FB950"; label: "HOME DIST"; value: appState.connected ? Number(appState.homeDistance).toFixed(1) : "--"; unit: "m" }
+                            TelCard { icon: "\u21C4"; iconColor: "#FFA657"; label: "CMD SRC"; value: appState.connected ? appState.activeCommandSource : "--"; unit: "" }
+                            TelCard { icon: "\u26A0"; iconColor: appState.alertLevel === "NONE" || !appState.connected ? "#3FB950" : "#F85149"; label: "ALERT"; value: appState.connected ? appState.alertLevel : "--"; unit: "" }
                         }
                     }
 
-                    Row {
-                        width: parent.width; spacing: 6
-                        Column {
-                            width: (parent.width - 6) / 2; spacing: 3
-                            Text { text: "Z [m]"; color: "#8B949E"; font.pixelSize: 9 }
-                            MiniField { id: zField; width: parent.width; height: 26 }
+                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
+
+                    // ── COMMAND FEEDBACK ──
+                    Column {
+                        width: parent.width - 20; spacing: 4
+                        Text { text: "COMMAND"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
+                        Row {
+                            width: parent.width; spacing: 6
+                            Text { text: "最后指令"; color: "#6E7681"; font.pixelSize: 10 }
+                            Text { text: appState.lastCommand || "--"; color: "#E6EDF3"; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; width: parent.width - 70 }
                         }
-                        Column {
-                            width: (parent.width - 6) / 2; spacing: 3
-                            Text { text: "Yaw [deg]"; color: "#8B949E"; font.pixelSize: 9 }
-                            MiniField { id: yawField; width: parent.width; height: 26 }
+                        Row {
+                            width: parent.width; spacing: 6
+                            Text { text: "指令回执"; color: "#6E7681"; font.pixelSize: 10 }
+                            Text { text: appState.commandAck || "--"; color: "#58A6FF"; font.pixelSize: 10; font.bold: true; elide: Text.ElideRight; width: parent.width - 70 }
                         }
                     }
 
-                    PrimaryButton {
-                        width: parent.width; height: 30
-                        text: "上传指令"; fillColor: "#1F6FEB"
-                        onClicked: appState.sendManualMove(
-                            manualModeBox.currentText,
-                            Number(xField.val || 0), Number(yField.val || 0),
-                            Number(zField.val || 0), Number(yawField.val || 0))
+                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
+
+                    // ── NAVIGATION ──
+                    Column {
+                        width: parent.width - 20; spacing: 6
+                        Text { text: "NAVIGATION"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
+
+                        TelemetryGroup { title: "位置 [m]"; labels: ["X","Y","Z"]
+                            values: appState.connected ? [ Number(appState.positionX).toFixed(2), Number(appState.positionY).toFixed(2), Number(appState.positionZ).toFixed(2) ] : ["--","--","--"] }
+                        TelemetryGroup { title: "速度 [m/s]"; labels: ["X","Y","Z"]
+                            values: appState.connected ? [ Number(appState.velocityX).toFixed(2), Number(appState.velocityY).toFixed(2), Number(appState.velocityZ).toFixed(2) ] : ["--","--","--"] }
+                        TelemetryGroup { title: "姿态 [deg]"; labels: ["R","P","Y"]
+                            values: appState.connected ? [ Number(appState.roll).toFixed(1), Number(appState.pitch).toFixed(1), Number(appState.yaw).toFixed(1) ] : ["--","--","--"] }
+                        TelemetryGroup { title: "期望位置 [m]"; labels: ["X","Y","Z"]
+                            values: appState.connected ? [ Number(appState.desiredPositionX).toFixed(2), Number(appState.desiredPositionY).toFixed(2), Number(appState.desiredPositionZ).toFixed(2) ] : ["--","--","--"] }
+                        TelemetryGroup { title: "期望速度 [m/s]"; labels: ["X","Y","Z"]
+                            values: appState.connected ? [ Number(appState.desiredVelocityX).toFixed(2), Number(appState.desiredVelocityY).toFixed(2), Number(appState.desiredVelocityZ).toFixed(2) ] : ["--","--","--"] }
+                    }
+
+                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
+
+                    // ── QUICK COMMANDS (collapsible) ──
+                    Column {
+                        id: quickCmdSection
+                        width: parent.width - 20; spacing: 6
+                        property bool expanded: true
+
+                        Item {
+                            width: parent.width; height: 16
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "QUICK COMMANDS"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
+                            Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: quickCmdSection.expanded ? "\u25BC" : "\u25B6"; color: "#6E7681"; font.pixelSize: 8 }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: quickCmdSection.expanded = !quickCmdSection.expanded }
+                        }
+
+                        Column {
+                            visible: quickCmdSection.expanded; width: parent.width; spacing: 4
+                            PrimaryButton { width: parent.width; height: 26; text: "当前点悬停"; fillColor: "#1F4E8C"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
+                            PrimaryButton { width: parent.width; height: 26; text: "初始点悬停"; fillColor: "#1A5C30"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
+                            PrimaryButton { width: parent.width; height: 26; text: "降落"; fillColor: "#6E1A1A"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
+                        }
+                    }
+
+                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
+
+                    // ── MANUAL CONTROL (collapsible) ──
+                    Column {
+                        id: manualCtrlSection
+                        width: parent.width - 20; spacing: 6
+                        property bool expanded: false
+
+                        Item {
+                            width: parent.width; height: 16
+                            Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: "MANUAL CONTROL"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
+                            Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: manualCtrlSection.expanded ? "\u25BC" : "\u25B6"; color: "#6E7681"; font.pixelSize: 8 }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: manualCtrlSection.expanded = !manualCtrlSection.expanded }
+                        }
+
+                        Column {
+                            visible: manualCtrlSection.expanded; width: parent.width; spacing: 6
+
+                            ComboBox {
+                                id: manualModeBox
+                                width: parent.width; height: 26
+                                model: ["XYZ_POS", "XYZ_VEL", "XYZ_POS_BODY", "LAT_LON_ALT"]
+                                background: Rectangle { radius: 5; color: "#21262D"; border.color: "#30363D" }
+                                contentItem: Text { leftPadding: 8; text: manualModeBox.currentText; color: "#E6EDF3"; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter }
+                            }
+
+                            Row {
+                                width: parent.width; spacing: 6
+                                Column {
+                                    width: (parent.width - 6) / 2; spacing: 3
+                                    Text { text: "X [m]"; color: "#8B949E"; font.pixelSize: 9 }
+                                    MiniField { id: xField; width: parent.width; height: 26 }
+                                }
+                                Column {
+                                    width: (parent.width - 6) / 2; spacing: 3
+                                    Text { text: "Y [m]"; color: "#8B949E"; font.pixelSize: 9 }
+                                    MiniField { id: yField; width: parent.width; height: 26 }
+                                }
+                            }
+                            Row {
+                                width: parent.width; spacing: 6
+                                Column {
+                                    width: (parent.width - 6) / 2; spacing: 3
+                                    Text { text: "Z [m]"; color: "#8B949E"; font.pixelSize: 9 }
+                                    MiniField { id: zField; width: parent.width; height: 26 }
+                                }
+                                Column {
+                                    width: (parent.width - 6) / 2; spacing: 3
+                                    Text { text: "Yaw [deg]"; color: "#8B949E"; font.pixelSize: 9 }
+                                    MiniField { id: yawField; width: parent.width; height: 26 }
+                                }
+                            }
+
+                            PrimaryButton {
+                                width: parent.width; height: 30; text: "上传指令"; fillColor: "#1F6FEB"
+                                onClicked: appState.sendManualMove(manualModeBox.currentText, Number(xField.val || 0), Number(yField.val || 0), Number(zField.val || 0), Number(yawField.val || 0))
+                            }
+                        }
                     }
                 }
             }
@@ -677,26 +1111,53 @@ Item {
     //  Inline Components
     // ═══════════════════════════════════════
 
-    component SidebarIcon: Rectangle {
+    // ── Telemetry card for 2-column grid ──
+    component TelCard: Rectangle {
         property string icon: ""
+        property color iconColor: "#58A6FF"
         property string label: ""
-        property bool active: false
-        signal clicked()
+        property string value: "0.0"
+        property string unit: ""
 
-        width: 48; height: 48; radius: 8
-        color: active ? "#1F6FEB" : (sideMA.containsMouse ? "#21262D" : "transparent")
-        anchors.horizontalCenter: parent.horizontalCenter
+        width: (parent.width - 6) / 2; height: 56; radius: 6
+        color: "#0D1117"; border.color: "#21262D"
 
-        Column {
-            anchors.centerIn: parent; spacing: 2
-            Text { text: icon; font.pixelSize: 18; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
-            Text { text: label; color: active ? "#FFFFFF" : "#6E7681"; font.pixelSize: 9; font.bold: active; horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter }
+        Row {
+            anchors.fill: parent; anchors.margins: 8; spacing: 6
+            Rectangle {
+                width: 28; height: 28; radius: 6
+                color: Qt.rgba(iconColor.r, iconColor.g, iconColor.b, 0.12)
+                anchors.verticalCenter: parent.verticalCenter
+                Text { anchors.centerIn: parent; text: icon; color: iconColor; font.pixelSize: 14; font.bold: true }
+            }
+            Column {
+                anchors.verticalCenter: parent.verticalCenter; spacing: 1
+                Text { text: label; color: "#6E7681"; font.pixelSize: 7; font.bold: true; font.letterSpacing: 0.5 }
+                Row {
+                    spacing: 2
+                    Text { text: value; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas" }
+                    Text { text: unit; color: "#6E7681"; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+                }
+            }
         }
+    }
 
-        MouseArea {
-            id: sideMA; anchors.fill: parent; hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor; onClicked: parent.clicked()
-        }
+    // ── Status dot with label for dashboard ──
+    component DashDot: Row {
+        property color dotColor: "#3FB950"
+        property string label: ""
+        spacing: 4
+        Rectangle { width: 6; height: 6; radius: 3; color: dotColor; anchors.verticalCenter: parent.verticalCenter }
+        Text { text: label; color: "#6E7681"; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+    }
+
+    component DashKV: Item {
+        property string label: ""
+        property string value: ""
+        property color valueColor: "#E6EDF3"
+        width: parent.width; height: 18
+        Text { anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; text: label; color: "#6E7681"; font.pixelSize: 10 }
+        Text { anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter; text: value; color: valueColor; font.pixelSize: 10; font.bold: true; font.family: "Consolas"; elide: Text.ElideRight; width: 130; horizontalAlignment: Text.AlignRight }
     }
 
     component TelemetryGroup: Rectangle {
@@ -704,14 +1165,14 @@ Item {
         property var labels: ["X","Y","Z"]
         property var values: []
 
-        width: 250; height: 68; radius: 8
-        color: "#161B22"; border.color: "#30363D"
+        width: parent.width; height: 54; radius: 6
+        color: "#0D1117"; border.color: "#21262D"
 
         Column {
-            anchors.fill: parent; anchors.margins: 8; spacing: 4
-            Text { text: title; color: "#9AA4B2"; font.pixelSize: 10; font.bold: true }
+            anchors.fill: parent; anchors.margins: 6; spacing: 2
+            Text { text: title; color: "#9AA4B2"; font.pixelSize: 9; font.bold: true }
             Row {
-                width: parent.width; height: 30; spacing: 0
+                width: parent.width; height: 26; spacing: 0
                 Repeater {
                     model: values
                     delegate: Item {

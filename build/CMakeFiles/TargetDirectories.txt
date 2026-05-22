@@ -1,6 +1,0 @@
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/CMakeFiles/ZenithGroundStationQt.dir
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/CMakeFiles/ZenithGroundStationQt_qmlimportscan.dir
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/CMakeFiles/edit_cache.dir
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/CMakeFiles/rebuild_cache.dir
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/CMakeFiles/ZenithGroundStationQt_autogen_timestamp_deps.dir
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/CMakeFiles/ZenithGroundStationQt_autogen.dir

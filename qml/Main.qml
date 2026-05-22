@@ -14,216 +14,274 @@ ApplicationWindow {
 
     property int currentPage: 0
 
-    // ── Header ──
-    header: Rectangle {
-        height: 78
-        color: "#161B22"
+    Column {
+        anchors.fill: parent
+        spacing: 0
 
-        Column {
-            anchors.fill: parent
+        // ══════════════════════════════════════
+        //  Header — single compact row (44px)
+        // ══════════════════════════════════════
+        Rectangle {
+            id: headerBar
+            width: parent.width; height: 44
+            color: "#161B22"
+
+            Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: "#30363D" }
+
+            // ── Left: Brand + Vehicle + Connection ──
+            Row {
+                anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 56   // align past sidebar width
+                spacing: 10
+
+                Text {
+                    text: "ZENITH"; color: "#58A6FF"
+                    font.pixelSize: 16; font.bold: true; font.letterSpacing: 3
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                Rectangle { width: 1; height: 22; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+
+                // Protocol indicator
+                Rectangle {
+                    width: protoLabel.width + 16; height: 24; radius: 4
+                    color: "#21262D"; border.color: "#30363D"
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        id: protoLabel; anchors.centerIn: parent
+                        text: "TCP"; color: "#8B949E"; font.pixelSize: 10; font.bold: true
+                    }
+                }
+
+                // Connection address
+                Rectangle {
+                    width: connAddr.width + 16; height: 24; radius: 4
+                    color: "#0D1117"; border.color: "#30363D"
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        id: connAddr; anchors.centerIn: parent
+                        text: appState.remoteHostIp + ":" + appState.tcpPort
+                        color: "#8B949E"; font.pixelSize: 11; font.family: "Consolas"
+                    }
+                }
+
+                // Connect / Disconnect button
+                Rectangle {
+                    width: connBtnLabel.width + 24; height: 26; radius: 5
+                    color: appState.protocolConnected ? "#6E1A1A" : "#1A6334"
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        id: connBtnLabel; anchors.centerIn: parent
+                        text: appState.protocolConnected ? "Disconnect" : "Connect"
+                        color: "#FFFFFF"; font.pixelSize: 11; font.bold: true
+                    }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: appState.protocolConnected ? appState.disconnectProtocol() : appState.connectProtocol()
+                    }
+                }
+
+                // Vehicle selector
+                ComboBox {
+                    id: vehicleCombo; width: 80; height: 24
+                    anchors.verticalCenter: parent.verticalCenter
+                    model: ["UAV1", "UAV2", "UAV3"]; currentIndex: 0
+                    onActivated: appState.selectVehicle(currentText)
+                    background: Rectangle { radius: 5; color: "#21262D"; border.color: "#30363D" }
+                    contentItem: Text { leftPadding: 8; text: vehicleCombo.currentText; color: "#E6EDF3"; font.pixelSize: 11; font.bold: true; verticalAlignment: Text.AlignVCenter }
+                }
+
+                // Gear → open connection dialog
+                Rectangle {
+                    width: 26; height: 26; radius: 5
+                    color: gearMA.containsMouse ? "#30363D" : "#21262D"
+                    border.color: "#30363D"
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text { anchors.centerIn: parent; text: "\u2699"; font.pixelSize: 14; color: "#8B949E" }
+                    MouseArea { id: gearMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: connectionDialog.open() }
+                }
+            }
+
+            // ── Right: Mode + Armed + Status dots + Metrics ──
+            Row {
+                anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 14; spacing: 10
+
+                // Mode badge
+                HeaderBadge {
+                    label: "Mode"
+                    value: appState.connected ? appState.execState : "--"
+                    accent: appState.execState === "FAILSAFE" ? "#F85149" : appState.execState === "DISARMED" ? "#8B949E" : "#3FB950"
+                }
+
+                // Armed badge
+                Rectangle {
+                    width: armedLabel.width + 16; height: 24; radius: 4
+                    color: appState.armed ? Qt.rgba(0.973, 0.318, 0.286, 0.12) : Qt.rgba(0.247, 0.725, 0.314, 0.12)
+                    border.color: appState.armed ? Qt.rgba(0.973, 0.318, 0.286, 0.30) : Qt.rgba(0.247, 0.725, 0.314, 0.30)
+                    anchors.verticalCenter: parent.verticalCenter
+                    Text {
+                        id: armedLabel; anchors.centerIn: parent
+                        text: appState.armed ? "ARMED" : "DISARMED"
+                        color: appState.armed ? "#F85149" : "#3FB950"
+                        font.pixelSize: 10; font.bold: true
+                    }
+                }
+
+                Rectangle { width: 1; height: 20; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+
+                // Status dots: Connection / GPS / Battery
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter; spacing: 10
+                    StatusDot { dotColor: appState.protocolConnected ? "#3FB950" : "#F85149"; label: "Link" }
+                    StatusDot { dotColor: appState.connected && appState.gpsStatus.indexOf("3D") >= 0 ? "#3FB950" : appState.connected && appState.gpsStatus.indexOf("2D") >= 0 ? "#FFA657" : "#F85149"; label: "GPS" }
+                    StatusDot { dotColor: !appState.connected ? "#484F58" : appState.batteryPercent < 0.2 ? "#F85149" : appState.batteryPercent < 0.4 ? "#FFA657" : "#3FB950"; label: "Bat" }
+                }
+
+                Rectangle { width: 1; height: 20; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
+
+                // Battery voltage + percent
+                Text {
+                    text: appState.connected ? Number(appState.batteryVoltage).toFixed(1) + "V" : "--"
+                    color: "#C9D1D9"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Text {
+                    text: appState.connected ? Math.round(appState.batteryPercent * 100) + "%" : "--"
+                    color: appState.batteryPercent < 0.2 ? "#F85149" : "#C9D1D9"
+                    font.pixelSize: 11; font.family: "Consolas"; font.bold: true
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+
+                // Altitude
+                Text {
+                    text: "Alt " + (appState.connected ? Number(appState.altitude).toFixed(1) : "--") + "m"
+                    color: "#8B949E"; font.pixelSize: 11; font.family: "Consolas"
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+
+        // ══════════════════════════════════════
+        //  Body: Global Sidebar + Content
+        // ══════════════════════════════════════
+        Row {
+            width: parent.width
+            height: parent.height - 44
             spacing: 0
 
-            // ── Row 1: Brand + Tabs + Key Status ──
-            Item {
-                width: parent.width; height: 42
+            // ── Global Navigation Sidebar (44px) ──
+            Rectangle {
+                id: globalSidebar
+                width: 44; height: parent.height
+                color: "#161B22"
 
-                // Left: Brand + Vehicle + Connection
-                Row {
-                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 14; spacing: 10
+                Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: "#30363D" }
 
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter; spacing: 1
-                        Text { text: "ZENITH"; color: "#58A6FF"; font.pixelSize: 17; font.bold: true; font.letterSpacing: 3 }
-                        Text { text: "Ground Station"; color: "#6E7681"; font.pixelSize: 8; font.letterSpacing: 1 }
-                    }
+                Column {
+                    anchors.top: parent.top; anchors.topMargin: 8
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 2
 
-                    Rectangle { width: 1; height: 26; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
-
-                    ComboBox {
-                        id: vehicleCombo; width: 86; height: 24
-                        anchors.verticalCenter: parent.verticalCenter
-                        model: ["UAV1", "UAV2", "UAV3"]; currentIndex: 0
-                        onActivated: appState.selectVehicle(currentText)
-                        background: Rectangle { radius: 5; color: "#21262D"; border.color: "#30363D" }
-                        contentItem: Text { leftPadding: 8; text: vehicleCombo.currentText; color: "#E6EDF3"; font.pixelSize: 12; font.bold: true; verticalAlignment: Text.AlignVCenter }
-                    }
-
-                    Button {
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitWidth: 68; implicitHeight: 24; text: "连接设置"
-                        onClicked: connectionDialog.open()
-                        background: Rectangle { radius: 5; color: "#21262D"; border.color: "#1F6FEB" }
-                        contentItem: Text { text: parent.text; color: "#58A6FF"; font.pixelSize: 10; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                    }
+                    NavIcon { icon: "\u229E"; label: "概览";  active: currentPage === 0; onNav: currentPage = 0 }
+                    NavIcon { icon: "\u2B21"; label: "模块";  active: currentPage === 1; onNav: currentPage = 1 }
+                    NavIcon { icon: "\u27E8\u27E9"; label: "脚本"; active: currentPage === 2; onNav: currentPage = 2 }
+                    NavIcon { icon: "\u2261"; label: "参数";  active: currentPage === 3; onNav: currentPage = 3 }
                 }
 
-                // Center: Tabs
-                Row {
-                    anchors.centerIn: parent; spacing: 4
-                    Repeater {
-                        model: [ { label: "概览", page: 0 }, { label: "模块", page: 1 }, { label: "脚本", page: 2 }, { label: "参数", page: 3 } ]
-                        delegate: Button {
-                            implicitWidth: 60; implicitHeight: 26; text: modelData.label
-                            onClicked: window.currentPage = modelData.page
-                            background: Rectangle { radius: 6; color: window.currentPage === modelData.page ? "#1F6FEB" : "transparent"; border.color: window.currentPage === modelData.page ? "#1F6FEB" : "#30363D" }
-                            contentItem: Text { text: parent.text; color: window.currentPage === modelData.page ? "#FFFFFF" : "#8B949E"; font.pixelSize: 12; font.bold: true; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter }
-                        }
-                    }
-                }
-
-                // Right: Key operational badges
-                Row {
-                    anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
-                    anchors.rightMargin: 14; spacing: 8
-
-                    HeaderBadge { label: "执行状态"; value: appState.connected ? appState.execState : "--"
-                        accent: appState.execState === "FAILSAFE" ? "#F85149" : appState.execState === "DISARMED" ? "#8B949E" : "#3FB950" }
-                    HeaderBadge { label: "任务模式"; value: appState.connected ? appState.missionMode : "--"
-                        accent: appState.missionMode === "EMERGENCY" ? "#F85149" : "#BC8CFF" }
-                    HeaderBadge { label: "指令源"; value: appState.connected ? appState.activeCommandSource : "--"; accent: "#FFA657" }
+                // Settings at bottom
+                NavIcon {
+                    anchors.bottom: parent.bottom; anchors.bottomMargin: 8
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    icon: "\u2699"; label: "设置"; active: false
+                    onNav: connectionDialog.open()
                 }
             }
 
-            // ── Separator ──
-            Rectangle { width: parent.width; height: 1; color: "#30363D" }
+            // ── Content Area ──
+            Rectangle {
+                width: parent.width - 44; height: parent.height
+                color: "#0D1117"
 
-            // ── Row 2: System status — uniform "label: value" items with dot separators ──
-            Item {
-                width: parent.width; height: 35
-
-                Row {
-                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
-                    anchors.leftMargin: 14; spacing: 0
-
-                    StatusItem {
-                        label: "解锁状态"; value: appState.armed ? "已解锁" : "未解锁"
-                        dotColor: appState.armed ? "#F85149" : "#3FB950"
-                    }
-                    HeaderSep {}
-                    StatusItem {
-                        label: "电量[ V ]"; value: appState.connected ? Number(appState.batteryVoltage).toFixed(1) + " | " + Math.round(appState.batteryPercent * 100) + "%" : "--"
-                        dotColor: !appState.connected ? "#8B949E" : appState.batteryPercent < 0.2 ? "#F85149" : appState.batteryPercent < 0.4 ? "#FFA657" : "#3FB950"
-                    }
-                    HeaderSep {}
-                    StatusItem {
-                        label: "定位源"; value: appState.connected ? appState.locationSource : "--"
-                        dotColor: "#A5D6FF"
-                    }
-                    HeaderSep {}
-                    StatusItem {
-                        label: "GPS状态"; value: appState.connected ? appState.gpsStatus : "--"
-                        dotColor: "#A5D6FF"
-                    }
-                    HeaderSep {}
-                    StatusItem {
-                        label: "心跳链路"; value: appState.heartbeatLinkState
-                        dotColor: appState.heartbeatLinkState === "CONNECTED" ? "#3FB950" : "#F85149"
-                    }
-                    HeaderSep {}
-                    StatusItem {
-                        label: "协议连接"; value: appState.protocolConnected ? "已连接" : "未连接"
-                        dotColor: appState.protocolConnected ? "#3FB950" : "#8B949E"
-                    }
-                    HeaderSep {}
-                    StatusItem {
-                        label: "保护触发"; value: appState.failsafe ? "true" : "false"
-                        dotColor: appState.failsafe ? "#F85149" : "#3FB950"
-                    }
+                Loader {
+                    id: pageLoader
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    sourceComponent: window.currentPage === 0 ? overviewPage
+                                     : window.currentPage === 1 ? modulesPage
+                                     : window.currentPage === 2 ? scriptsPage
+                                     : paramsPage
+                    onSourceComponentChanged: pageLoader.opacity = 0.0
+                    onLoaded: pageLoader.opacity = 1.0
+                    Behavior on opacity { NumberAnimation { duration: 150 } }
                 }
             }
         }
     }
 
-    // ── Main Content ──
-    Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: header.bottom
-        anchors.bottom: parent.bottom
-        anchors.margins: 10
-        radius: 12
-        color: "#0D1117"
-        border.color: "#21262D"
+    // ══════════════════════════════════════
+    //  Inline Components
+    // ══════════════════════════════════════
 
-        Loader {
-            anchors.fill: parent
-            anchors.margins: 10
-            sourceComponent: window.currentPage === 0 ? overviewPage
-                             : window.currentPage === 1 ? modulesPage
-                             : window.currentPage === 2 ? scriptsPage
-                             : paramsPage
-        }
-    }
-
-    // ── HeaderBadge Component (Row 1) ──
     component HeaderBadge: Rectangle {
         property string label: ""
         property string value: ""
         property color accent: "#58A6FF"
 
-        height: 36
-        width: Math.max(82, labelTxt.width + valTxt.width + 20)
-        radius: 7
+        height: 32; width: Math.max(70, badgeLbl.width + badgeVal.width + 18)
+        radius: 6; anchors.verticalCenter: parent.verticalCenter
         color: Qt.rgba(accent.r, accent.g, accent.b, 0.08)
         border.color: Qt.rgba(accent.r, accent.g, accent.b, 0.20)
 
         Column {
-            anchors.centerIn: parent
-            spacing: 1
-            Text {
-                id: labelTxt; text: label
-                color: Qt.rgba(accent.r, accent.g, accent.b, 0.70)
-                font.pixelSize: 8; font.letterSpacing: 0.5
-                horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter
-            }
-            Text {
-                id: valTxt; text: value
-                color: accent; font.pixelSize: 11; font.bold: true
-                horizontalAlignment: Text.AlignHCenter; anchors.horizontalCenter: parent.horizontalCenter
-            }
+            anchors.centerIn: parent; spacing: 1
+            Text { id: badgeLbl; text: label; color: Qt.rgba(accent.r, accent.g, accent.b, 0.65); font.pixelSize: 7; font.letterSpacing: 0.5; anchors.horizontalCenter: parent.horizontalCenter }
+            Text { id: badgeVal; text: value; color: accent; font.pixelSize: 11; font.bold: true; anchors.horizontalCenter: parent.horizontalCenter }
         }
     }
 
-    // ── StatusItem Component (Row 2) — "● label: value" format ──
-    component StatusItem: Item {
+    component StatusDot: Row {
+        property color dotColor: "#3FB950"
         property string label: ""
-        property string value: ""
-        property color dotColor: "#58A6FF"
-
-        width: statusRow.width; height: 35
-
-        Row {
-            id: statusRow
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: 5
-
-            Rectangle {
-                width: 7; height: 7; radius: 3.5
-                color: dotColor
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Text {
-                text: label + ":"; color: "#6E7681"; font.pixelSize: 11
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Text {
-                text: value; color: "#C9D1D9"; font.pixelSize: 11; font.bold: true
-                anchors.verticalCenter: parent.verticalCenter
-            }
-        }
+        spacing: 4; anchors.verticalCenter: parent.verticalCenter
+        Rectangle { width: 7; height: 7; radius: 3.5; color: dotColor; anchors.verticalCenter: parent.verticalCenter }
+        Text { text: label; color: "#6E7681"; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
     }
 
-    // ── HeaderSep — thin separator between Row 2 items ──
-    component HeaderSep: Item {
-        width: 18; height: 35
+    component NavIcon: Item {
+        property string icon: ""
+        property string label: ""
+        property bool active: false
+        signal nav()
+
+        width: 40; height: 46
+
+        // Active left bar
+        Rectangle {
+            visible: active
+            anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter
+            width: 3; height: 22; radius: 1.5; color: "#1F6FEB"
+        }
+
         Rectangle {
             anchors.centerIn: parent
-            width: 1; height: 14; color: "#30363D"
+            width: 36; height: 42; radius: 8
+            color: active ? Qt.rgba(0.122, 0.435, 0.922, 0.12) : (navMA.containsMouse ? "#21262D" : "transparent")
+            Behavior on color { ColorAnimation { duration: 120 } }
+
+            Column {
+                anchors.centerIn: parent; spacing: 2
+                Text { text: icon; font.pixelSize: 15; color: active ? "#58A6FF" : "#8B949E"; anchors.horizontalCenter: parent.horizontalCenter; Behavior on color { ColorAnimation { duration: 120 } } }
+                Text { text: label; font.pixelSize: 8; color: active ? "#E6EDF3" : "#6E7681"; anchors.horizontalCenter: parent.horizontalCenter; Behavior on color { ColorAnimation { duration: 120 } } }
+            }
+
+            MouseArea { id: navMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: parent.parent.nav() }
         }
     }
 
-    // ── Connection Dialog ──
+    // ══════════════════════════════════════
+    //  Connection Dialog (unchanged)
+    // ══════════════════════════════════════
     Dialog {
         id: connectionDialog
         modal: true
@@ -282,7 +340,6 @@ ApplicationWindow {
                             Text { text: connectionDialog.savedProfiles.length + " 个"; color: "#6E7681"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
                         }
 
-                        // Profile list (horizontal flow of clickable chips)
                         Flow {
                             width: parent.width; spacing: 6
 
@@ -311,25 +368,17 @@ ApplicationWindow {
                                             Text { text: modelData.name; color: "#E6EDF3"; font.pixelSize: 11; font.bold: true }
                                             Text { text: modelData.ip + ":" + modelData.tcp; color: "#6E7681"; font.pixelSize: 9 }
                                         }
-                                        // Delete button
                                         Rectangle {
                                             width: 18; height: 18; radius: 4
                                             color: delMA.containsMouse ? "#F8514933" : "transparent"
                                             anchors.verticalCenter: parent.verticalCenter
-                                            Text {
-                                                anchors.centerIn: parent
-                                                text: "\u00D7"; color: delMA.containsMouse ? "#F85149" : "#6E7681"; font.pixelSize: 14
-                                            }
-                                            MouseArea {
-                                                id: delMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                                onClicked: appState.deleteConnectionProfile(modelData.name)
-                                            }
+                                            Text { anchors.centerIn: parent; text: "\u00D7"; color: delMA.containsMouse ? "#F85149" : "#6E7681"; font.pixelSize: 14 }
+                                            MouseArea { id: delMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appState.deleteConnectionProfile(modelData.name) }
                                         }
                                     }
                                 }
                             }
 
-                            // Empty hint
                             Text {
                                 visible: connectionDialog.savedProfiles.length === 0
                                 text: "暂无已保存配置，填写后点击「保存配置」"
@@ -443,9 +492,9 @@ ApplicationWindow {
                         }
                     }
                 }
-            } // Column
-        } // contentItem Rectangle
-    } // Dialog
+            }
+        }
+    }
 
     Component { id: overviewPage; OverviewPage { } }
     Component { id: modulesPage; ModulesPage { } }

@@ -26,6 +26,8 @@ class AppState : public QObject
     Q_PROPERTY(bool requestActive READ requestActive NOTIFY telemetryChanged)
     Q_PROPERTY(QString locationSource READ locationSource NOTIFY telemetryChanged)
     Q_PROPERTY(QString gpsStatus READ gpsStatus NOTIFY telemetryChanged)
+    Q_PROPERTY(int gpsFix READ gpsFix NOTIFY telemetryChanged)
+    Q_PROPERTY(int locationSourceId READ locationSourceId NOTIFY telemetryChanged)
     Q_PROPERTY(QString heartbeatLink READ heartbeatLink NOTIFY telemetryChanged)
     Q_PROPERTY(QString videoLink READ videoLink NOTIFY telemetryChanged)
     Q_PROPERTY(QString rcLink READ rcLink NOTIFY telemetryChanged)
@@ -93,6 +95,8 @@ public:
     bool requestActive() const;
     QString locationSource() const;
     QString gpsStatus() const;
+    int gpsFix() const;
+    int locationSourceId() const;
     QString heartbeatLink() const;
     QString videoLink() const;
     QString rcLink() const;
@@ -201,6 +205,8 @@ private:
     bool m_requestActive = false;
     QString m_locationSource;
     QString m_gpsStatus;
+    int m_gpsFixType = 0;
+    int m_locationSourceId = 0;
     QString m_heartbeatLink;
     QString m_videoLink;
     QString m_rcLink;

@@ -1,0 +1,45 @@
+# Build artifacts
+/build/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.dylib
+
+# CMake
+CMakeLists.txt.user*
+CMakeUserPresets.json
+
+# Qt auto-generated
+*_autogen/
+moc_*.cpp
+qrc_*.cpp
+*.moc
+
+# IDEs
+.vscode/
+.idea/
+*.user
+*.pro.user*
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# Flight data
+flight_logs/
+
+# Test credentials (use config.local.json)
+tests/config.local.json

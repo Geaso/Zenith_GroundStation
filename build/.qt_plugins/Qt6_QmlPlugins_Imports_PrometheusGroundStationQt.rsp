@@ -1,9 +1,0 @@
--rootPath
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt
--cmake-output
--output-file
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build/.qt_plugins/Qt6_QmlPlugins_Imports_PrometheusGroundStationQt.cmake
--importPath
-C:/Users/13655/Desktop/PrometheusGroundStation-Pro/GroundStationQt/build
--importPath
-C:/Qt/6.6.3/mingw_64/./qml

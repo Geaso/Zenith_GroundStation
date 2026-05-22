@@ -47,6 +47,8 @@ QString TelemetryStore::pendingRequest() const { return m_pendingRequest; }
 bool TelemetryStore::requestActive() const { return m_requestActive; }
 QString TelemetryStore::locationSource() const { return m_locationSource; }
 QString TelemetryStore::gpsStatus() const { return m_gpsStatus; }
+int TelemetryStore::gpsFixType() const { return m_gpsFixType; }
+int TelemetryStore::locationSourceId() const { return m_locationSourceId; }
 QString TelemetryStore::heartbeatLink() const { return m_heartbeatLink; }
 QString TelemetryStore::videoLink() const { return m_videoLink; }
 QString TelemetryStore::rcLink() const { return m_rcLink; }
@@ -132,8 +134,10 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     m_connected = payload.value("connected", true).toBool();
     m_armed = payload.value("armed", false).toBool();
     m_flightMode = payload.value("mode", "UNKNOWN").toString();
-    m_locationSource = locationSourceName(payload.value("location_source").toInt());
-    m_gpsStatus = gpsStatusName(payload.value("gps_status").toInt());
+    m_locationSourceId = payload.value("location_source").toInt();
+    m_gpsFixType = payload.value("gps_status").toInt();
+    m_locationSource = locationSourceName(m_locationSourceId);
+    m_gpsStatus = gpsStatusName(m_gpsFixType);
     m_batteryVoltage = payload.value("battery_state").toDouble();
     m_batteryPercent = payload.value("battery_percetage").toDouble();
     m_altitude = payload.value("altitude").toDouble();
