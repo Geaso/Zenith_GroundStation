@@ -93,10 +93,15 @@ AppState::AppState(QObject *parent)
     if (!lastProfile.isEmpty()) {
         QVariantMap p = loadConnectionProfile(lastProfile);
         if (!p.isEmpty()) {
-            applyConnectionSettings(p.value("ip").toString(),
-                                    p.value("udp").toInt(),
-                                    p.value("tcp").toInt(),
-                                    p.value("heartbeat").toInt());
+            if (p.value("type").toString() == "serial") {
+                applySerialSettings(p.value("portName").toString(),
+                                    p.value("baudRate").toInt());
+            } else {
+                applyConnectionSettings(p.value("ip").toString(),
+                                        p.value("udp").toInt(),
+                                        p.value("tcp").toInt(),
+                                        p.value("heartbeat").toInt());
+            }
         }
     }
 }
@@ -130,6 +135,10 @@ double AppState::speed() const { return m_speed; }
 double AppState::positionX() const { return m_positionX; }
 double AppState::positionY() const { return m_positionY; }
 double AppState::positionZ() const { return m_positionZ; }
+double AppState::vinsPositionX() const { return m_vinsPositionX; }
+double AppState::vinsPositionY() const { return m_vinsPositionY; }
+double AppState::vinsPositionZ() const { return m_vinsPositionZ; }
+bool AppState::odomValid() const { return m_odomValid; }
 double AppState::velocityX() const { return m_velocityX; }
 double AppState::velocityY() const { return m_velocityY; }
 double AppState::velocityZ() const { return m_velocityZ; }
@@ -186,6 +195,20 @@ void AppState::runScriptAction(const QString &name, const QString &command, cons
 {
     m_commandDispatcher->runScript(name, command, target);
     emit commandTriggered(QString("Script Run: %1").arg(name));
+}
+
+void AppState::sendRemoteScript(const QString &cmd)
+{
+    QVariantMap payload;
+    payload.insert("mode", ZenithProtocol::CUSTOMMODE_MODE);
+    payload.insert("selectId", QVariantList{m_telemetryStore->currentVehicleId()});
+    payload.insert("use_mode", ZenithProtocol::UM_CREATE);
+    payload.insert("is_simulation", false);
+    payload.insert("swarm_num", 1);
+    payload.insert("cmd", cmd);
+    m_protocolClient->sendTcpMessage(ZenithProtocol::MODESELECTION, payload, m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback(QString("Remote: %1").arg(cmd), "Sent");
+    emit commandTriggered(QString("Remote Script: %1").arg(cmd));
 }
 
 void AppState::startModule(const QString &moduleName)
@@ -269,6 +292,7 @@ void AppState::switchLocationSource(int sourceIndex)
 
 void AppState::applyConnectionSettings(const QString &hostIp, int udpPort, int tcpPort, int heartbeatPort)
 {
+    m_protocolClient->setTransportMode(0); // Network
     m_protocolClient->setRemoteHostIp(hostIp);
     m_protocolClient->setUdpPort(static_cast<quint16>(udpPort));
     m_protocolClient->setTcpPort(static_cast<quint16>(tcpPort));
@@ -279,6 +303,19 @@ void AppState::applyConnectionSettings(const QString &hostIp, int udpPort, int t
     m_tcpPort = m_protocolClient->tcpPort();
     m_heartbeatPort = m_protocolClient->heartbeatPort();
     emit linkSettingsChanged();
+}
+
+void AppState::applySerialSettings(const QString &portName, int baudRate)
+{
+    m_protocolClient->setTransportMode(1); // Serial
+    m_protocolClient->setSerialPortName(portName);
+    m_protocolClient->setSerialBaudRate(baudRate);
+    emit linkSettingsChanged();
+}
+
+QObject *AppState::protocolClientObj() const
+{
+    return m_protocolClient;
 }
 
 void AppState::connectProtocol()
@@ -388,6 +425,10 @@ void AppState::syncFromStore()
     m_positionX = m_telemetryStore->positionX();
     m_positionY = m_telemetryStore->positionY();
     m_positionZ = m_telemetryStore->positionZ();
+    m_vinsPositionX = m_telemetryStore->vinsPositionX();
+    m_vinsPositionY = m_telemetryStore->vinsPositionY();
+    m_vinsPositionZ = m_telemetryStore->vinsPositionZ();
+    m_odomValid = m_telemetryStore->odomValid();
     m_velocityX = m_telemetryStore->velocityX();
     m_velocityY = m_telemetryStore->velocityY();
     m_velocityZ = m_telemetryStore->velocityZ();
@@ -423,43 +464,89 @@ QVariantList AppState::connectionProfiles() const
         settings.setArrayIndex(i);
         QVariantMap p;
         p.insert("name", settings.value("name").toString());
-        p.insert("ip", settings.value("ip").toString());
-        p.insert("udp", settings.value("udp").toInt());
-        p.insert("tcp", settings.value("tcp").toInt());
-        p.insert("heartbeat", settings.value("heartbeat").toInt());
+        QString type = settings.value("type", "tcp").toString();
+        p.insert("type", type);
+        if (type == "serial") {
+            p.insert("portName", settings.value("portName").toString());
+            p.insert("baudRate", settings.value("baudRate").toInt());
+        } else {
+            p.insert("ip", settings.value("ip").toString());
+            p.insert("udp", settings.value("udp").toInt());
+            p.insert("tcp", settings.value("tcp").toInt());
+            p.insert("heartbeat", settings.value("heartbeat").toInt());
+        }
         profiles.append(p);
     }
     settings.endArray();
     return profiles;
 }
 
-void AppState::saveConnectionProfile(const QString &name, const QString &ip, int udpPort, int tcpPort, int heartbeatPort)
+// Helper: read all profiles from QSettings into a list
+static QList<QVariantMap> readAllProfiles(QSettings &settings)
 {
-    QSettings settings;
-
-    // Read existing profiles
     QList<QVariantMap> profiles;
     int size = settings.beginReadArray("ConnectionProfiles");
     for (int i = 0; i < size; ++i) {
         settings.setArrayIndex(i);
         QVariantMap p;
         p.insert("name", settings.value("name").toString());
-        p.insert("ip", settings.value("ip").toString());
-        p.insert("udp", settings.value("udp").toInt());
-        p.insert("tcp", settings.value("tcp").toInt());
-        p.insert("heartbeat", settings.value("heartbeat").toInt());
+        QString type = settings.value("type", "tcp").toString();
+        p.insert("type", type);
+        if (type == "serial") {
+            p.insert("portName", settings.value("portName").toString());
+            p.insert("baudRate", settings.value("baudRate").toInt());
+        } else {
+            p.insert("ip", settings.value("ip").toString());
+            p.insert("udp", settings.value("udp").toInt());
+            p.insert("tcp", settings.value("tcp").toInt());
+            p.insert("heartbeat", settings.value("heartbeat").toInt());
+        }
         profiles.append(p);
     }
     settings.endArray();
+    return profiles;
+}
+
+// Helper: write all profiles back to QSettings
+static void writeAllProfiles(QSettings &settings, const QList<QVariantMap> &profiles)
+{
+    settings.beginWriteArray("ConnectionProfiles", profiles.size());
+    for (int i = 0; i < profiles.size(); ++i) {
+        settings.setArrayIndex(i);
+        const auto &p = profiles.at(i);
+        settings.setValue("name", p.value("name"));
+        QString type = p.value("type", "tcp").toString();
+        settings.setValue("type", type);
+        if (type == "serial") {
+            settings.setValue("portName", p.value("portName"));
+            settings.setValue("baudRate", p.value("baudRate"));
+        } else {
+            settings.setValue("ip", p.value("ip"));
+            settings.setValue("udp", p.value("udp"));
+            settings.setValue("tcp", p.value("tcp"));
+            settings.setValue("heartbeat", p.value("heartbeat"));
+        }
+    }
+    settings.endArray();
+}
+
+void AppState::saveConnectionProfile(const QString &name, const QString &ip, int udpPort, int tcpPort, int heartbeatPort)
+{
+    QSettings settings;
+    QList<QVariantMap> profiles = readAllProfiles(settings);
 
     // Update or append
     bool found = false;
     for (auto &p : profiles) {
         if (p.value("name").toString() == name) {
+            p.insert("type", QStringLiteral("tcp"));
             p.insert("ip", ip);
             p.insert("udp", udpPort);
             p.insert("tcp", tcpPort);
             p.insert("heartbeat", heartbeatPort);
+            // Remove serial fields if profile was previously serial
+            p.remove("portName");
+            p.remove("baudRate");
             found = true;
             break;
         }
@@ -467,6 +554,7 @@ void AppState::saveConnectionProfile(const QString &name, const QString &ip, int
     if (!found) {
         QVariantMap p;
         p.insert("name", name);
+        p.insert("type", QStringLiteral("tcp"));
         p.insert("ip", ip);
         p.insert("udp", udpPort);
         p.insert("tcp", tcpPort);
@@ -474,18 +562,43 @@ void AppState::saveConnectionProfile(const QString &name, const QString &ip, int
         profiles.append(p);
     }
 
-    // Write back
-    settings.beginWriteArray("ConnectionProfiles", profiles.size());
-    for (int i = 0; i < profiles.size(); ++i) {
-        settings.setArrayIndex(i);
-        const auto &p = profiles.at(i);
-        settings.setValue("name", p.value("name"));
-        settings.setValue("ip", p.value("ip"));
-        settings.setValue("udp", p.value("udp"));
-        settings.setValue("tcp", p.value("tcp"));
-        settings.setValue("heartbeat", p.value("heartbeat"));
+    writeAllProfiles(settings, profiles);
+
+    settings.setValue("lastUsedProfile", name);
+    settings.sync();
+    emit profilesChanged();
+}
+
+void AppState::saveSerialConnectionProfile(const QString &name, const QString &portName, int baudRate)
+{
+    QSettings settings;
+    QList<QVariantMap> profiles = readAllProfiles(settings);
+
+    bool found = false;
+    for (auto &p : profiles) {
+        if (p.value("name").toString() == name) {
+            p.insert("type", QStringLiteral("serial"));
+            p.insert("portName", portName);
+            p.insert("baudRate", baudRate);
+            // Remove TCP fields if profile was previously TCP
+            p.remove("ip");
+            p.remove("udp");
+            p.remove("tcp");
+            p.remove("heartbeat");
+            found = true;
+            break;
+        }
     }
-    settings.endArray();
+    if (!found) {
+        QVariantMap p;
+        p.insert("name", name);
+        p.insert("type", QStringLiteral("serial"));
+        p.insert("portName", portName);
+        p.insert("baudRate", baudRate);
+        profiles.append(p);
+    }
+
+    writeAllProfiles(settings, profiles);
 
     settings.setValue("lastUsedProfile", name);
     settings.sync();
@@ -495,33 +608,15 @@ void AppState::saveConnectionProfile(const QString &name, const QString &ip, int
 void AppState::deleteConnectionProfile(const QString &name)
 {
     QSettings settings;
+    QList<QVariantMap> allProfiles = readAllProfiles(settings);
 
-    QList<QVariantMap> profiles;
-    int size = settings.beginReadArray("ConnectionProfiles");
-    for (int i = 0; i < size; ++i) {
-        settings.setArrayIndex(i);
-        QVariantMap p;
-        p.insert("name", settings.value("name").toString());
-        p.insert("ip", settings.value("ip").toString());
-        p.insert("udp", settings.value("udp").toInt());
-        p.insert("tcp", settings.value("tcp").toInt());
-        p.insert("heartbeat", settings.value("heartbeat").toInt());
+    QList<QVariantMap> filtered;
+    for (const auto &p : allProfiles) {
         if (p.value("name").toString() != name)
-            profiles.append(p);
+            filtered.append(p);
     }
-    settings.endArray();
 
-    settings.beginWriteArray("ConnectionProfiles", profiles.size());
-    for (int i = 0; i < profiles.size(); ++i) {
-        settings.setArrayIndex(i);
-        const auto &p = profiles.at(i);
-        settings.setValue("name", p.value("name"));
-        settings.setValue("ip", p.value("ip"));
-        settings.setValue("udp", p.value("udp"));
-        settings.setValue("tcp", p.value("tcp"));
-        settings.setValue("heartbeat", p.value("heartbeat"));
-    }
-    settings.endArray();
+    writeAllProfiles(settings, filtered);
 
     if (settings.value("lastUsedProfile").toString() == name)
         settings.remove("lastUsedProfile");
@@ -539,10 +634,17 @@ QVariantMap AppState::loadConnectionProfile(const QString &name) const
         if (settings.value("name").toString() == name) {
             QVariantMap p;
             p.insert("name", name);
-            p.insert("ip", settings.value("ip").toString());
-            p.insert("udp", settings.value("udp").toInt());
-            p.insert("tcp", settings.value("tcp").toInt());
-            p.insert("heartbeat", settings.value("heartbeat").toInt());
+            QString type = settings.value("type", "tcp").toString();
+            p.insert("type", type);
+            if (type == "serial") {
+                p.insert("portName", settings.value("portName").toString());
+                p.insert("baudRate", settings.value("baudRate").toInt());
+            } else {
+                p.insert("ip", settings.value("ip").toString());
+                p.insert("udp", settings.value("udp").toInt());
+                p.insert("tcp", settings.value("tcp").toInt());
+                p.insert("heartbeat", settings.value("heartbeat").toInt());
+            }
             settings.endArray();
             return p;
         }

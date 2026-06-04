@@ -1,15 +1,25 @@
 #pragma once
 
 #include <QObject>
+#include <QSerialPort>
+#include <QSerialPortInfo>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
 #include <QUdpSocket>
 #include <QVariantMap>
 
+enum class TransportMode { Network, Serial };
+
 class ZenithProtocolClient : public QObject
 {
     Q_OBJECT
+
+    Q_PROPERTY(int transportMode READ transportMode WRITE setTransportMode NOTIFY transportModeChanged)
+    Q_PROPERTY(QString serialPortName READ serialPortName WRITE setSerialPortName NOTIFY serialPortNameChanged)
+    Q_PROPERTY(int serialBaudRate READ serialBaudRate WRITE setSerialBaudRate NOTIFY serialBaudRateChanged)
+    Q_PROPERTY(QStringList availableSerialPorts READ availableSerialPorts NOTIFY availableSerialPortsChanged)
+
 public:
     explicit ZenithProtocolClient(QObject *parent = nullptr);
 
@@ -44,12 +54,25 @@ public:
     void noteModeSelectionAck();
     bool awaitingModeSelectionAck() const;
 
+    int transportMode() const;
+    void setTransportMode(int mode);
+    QString serialPortName() const;
+    void setSerialPortName(const QString &name);
+    int serialBaudRate() const;
+    void setSerialBaudRate(int baud);
+    QStringList availableSerialPorts() const;
+    Q_INVOKABLE void refreshSerialPorts();
+
 signals:
     void decodedMessage(int msgId, int robotId, const QVariantMap &payload);
     void transportStateChanged(const QString &stateText);
     void protocolLog(const QString &line);
     void linkStatesChanged();
     void tcpConnectedChanged(bool connected);
+    void transportModeChanged();
+    void serialPortNameChanged();
+    void serialBaudRateChanged();
+    void availableSerialPortsChanged();
 
 private slots:
     void onTcpConnected();
@@ -83,6 +106,12 @@ private:
     qint64 nowMs() const;
     void connectTcp();
     void disconnectTcp();
+    void startNetwork();
+    void stopNetwork();
+    void startSerial();
+    void stopSerial();
+    void onSerialReadyRead();
+    void onSerialError(QSerialPort::SerialPortError error);
 
     QString m_remoteHostIp = QStringLiteral("127.0.0.1");
     quint16 m_udpPort = 8889;
@@ -139,4 +168,11 @@ private:
     int m_modeSelectionRetries = 0;
     static constexpr int kModeSelectionAckTimeoutMs = 5000;
     static constexpr int kModeSelectionMaxRetries = 1;
+
+    // Serial transport
+    TransportMode m_transportMode{TransportMode::Network};
+    QSerialPort m_serialPort;
+    QByteArray m_serialRecvBuffer;
+    QString m_serialPortName;
+    qint32 m_serialBaudRate{57600};
 };

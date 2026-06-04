@@ -39,6 +39,10 @@ public:
     double positionX() const;
     double positionY() const;
     double positionZ() const;
+    double vinsPositionX() const;
+    double vinsPositionY() const;
+    double vinsPositionZ() const;
+    bool odomValid() const;
     double velocityX() const;
     double velocityY() const;
     double velocityZ() const;
@@ -121,6 +125,10 @@ private:
     double m_positionX = 0.0;
     double m_positionY = 0.0;
     double m_positionZ = 0.0;
+    double m_vinsPositionX = 0.0;
+    double m_vinsPositionY = 0.0;
+    double m_vinsPositionZ = 0.0;
+    bool m_odomValid = false;
     double m_velocityX = 0.0;
     double m_velocityY = 0.0;
     double m_velocityZ = 0.0;

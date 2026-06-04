@@ -101,6 +101,7 @@ struct TelemetryFieldSet
         "gps_status",
         "gps_num",
         "position[3]",
+        "vins_position[3]",
         "velocity[3]",
         "attitude[3]",
         "attitude_q",

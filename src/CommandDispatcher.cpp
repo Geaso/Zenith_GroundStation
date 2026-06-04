@@ -26,16 +26,21 @@ bool ensureControlLinkReady(TelemetryStore *telemetryStore, ZenithProtocolClient
 
 void CommandDispatcher::issueQuickAction(const QString &name)
 {
-    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, name)) {
+    // 安全命令（降落、当前点悬停）：只要串口/连接在就发，不受link状态阻塞
+    const bool isSafetyCommand = (name == "Land" || name == "降落" || name == "Emergency Land"
+                                  || name == "Hover Here" || name == "当前点悬停");
+    if (!isSafetyCommand && !ensureControlLinkReady(m_telemetryStore, m_protocolClient, name)) {
         return;
     }
 
     QVariantMap payload;
 
-    if (name == "Hover Here" || name == "Hover Home") {
-        payload.insert("Agent_CMD", name == "Hover Here" ? 2 : 1);
-    } else if (name == "Land" || name == "Emergency Land") {
-        payload.insert("Agent_CMD", 3);
+    if (name == "Hover Here" || name == "当前点悬停") {
+        payload.insert("Agent_CMD", 2);  // Current_Pos_Hover
+    } else if (name == "Hover Home" || name == "初始点悬停") {
+        payload.insert("Agent_CMD", 1);  // Init_Pos_Hover
+    } else if (name == "Land" || name == "降落" || name == "Emergency Land") {
+        payload.insert("Agent_CMD", 3);  // Land
     } else if (name == "Return Home") {
         payload.insert("Agent_CMD", 2);
     } else {

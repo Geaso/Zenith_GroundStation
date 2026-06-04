@@ -64,6 +64,10 @@ double TelemetryStore::speed() const { return m_speed; }
 double TelemetryStore::positionX() const { return m_positionX; }
 double TelemetryStore::positionY() const { return m_positionY; }
 double TelemetryStore::positionZ() const { return m_positionZ; }
+double TelemetryStore::vinsPositionX() const { return m_vinsPositionX; }
+double TelemetryStore::vinsPositionY() const { return m_vinsPositionY; }
+double TelemetryStore::vinsPositionZ() const { return m_vinsPositionZ; }
+bool TelemetryStore::odomValid() const { return m_odomValid; }
 double TelemetryStore::velocityX() const { return m_velocityX; }
 double TelemetryStore::velocityY() const { return m_velocityY; }
 double TelemetryStore::velocityZ() const { return m_velocityZ; }
@@ -145,6 +149,7 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     m_range = payload.value("range").toDouble();
 
     const QVariantList position = payload.value("position").toList();
+    const QVariantList vinsPosition = payload.value("vins_position").toList();
     const QVariantList velocity = payload.value("velocity").toList();
     const QVariantList attitude = payload.value("attitude").toList();
 
@@ -155,6 +160,13 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     m_positionY = posY;
     m_positionZ = posZ;
     m_homeDistance = qSqrt(posX * posX + posY * posY);
+
+    if (!vinsPosition.isEmpty()) {
+        m_vinsPositionX = vinsPosition.value(0).toDouble();
+        m_vinsPositionY = vinsPosition.value(1).toDouble();
+        m_vinsPositionZ = vinsPosition.value(2).toDouble();
+    }
+    m_odomValid = payload.value("odom_valid", false).toBool();
 
     const double velX = velocity.value(0).toDouble();
     const double velY = velocity.value(1).toDouble();
@@ -185,7 +197,6 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     m_flightStatus = m_connected ? "Telemetry Online" : "Vehicle Offline";
     m_heartbeatLink = "Heartbeat OK";
     m_videoLink = payload.value("video_status", m_videoStatus).toString();
-    m_vehicleName = QString("UAV%1").arg(senderId > 0 ? senderId : m_currentVehicleId);
     if (senderId > 0) {
         m_currentVehicleId = senderId;
     }

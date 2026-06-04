@@ -6,6 +6,12 @@ import "../components"
 Item {
     id: root
 
+    // Helper: eliminate -0.0 display
+    function fmt(val, decimals) {
+        var s = Number(val).toFixed(decimals)
+        return (s.charAt(0) === '-' && parseFloat(s) === 0) ? s.substring(1) : s
+    }
+
     // ── View index: 0=Map  1=Video  2=Data ──
     property int centerView: 0
 
@@ -121,34 +127,34 @@ Item {
                         Row {
                             spacing: 3; anchors.verticalCenter: parent.verticalCenter
                             Text { text: "ALT"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: appState.connected ? Number(appState.positionZ).toFixed(1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? fmt(appState.positionZ, 1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                             Text { text: "m"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                         }
                         Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
                         Row {
                             spacing: 3; anchors.verticalCenter: parent.verticalCenter
                             Text { text: "SPD"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: appState.connected ? Number(appState.speed).toFixed(1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? fmt(appState.speed, 1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                             Text { text: "m/s"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                         }
                         Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
                         Row {
                             spacing: 3; anchors.verticalCenter: parent.verticalCenter
                             Text { text: "VSPD"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: appState.connected ? Number(appState.velocityZ).toFixed(1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? fmt(appState.velocityZ, 1) : "0.0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                         }
                         Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
                         Row {
                             spacing: 3; anchors.verticalCenter: parent.verticalCenter
                             Text { text: "HDG"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: appState.connected ? Number(appState.yaw).toFixed(0) : "0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? fmt(appState.yaw, 0) : "0"; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                             Text { text: "\u00B0"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                         }
                         Rectangle { width: 1; height: 16; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
                         Row {
                             spacing: 3; anchors.verticalCenter: parent.verticalCenter
                             Text { text: "BAT"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: appState.connected ? Number(appState.batteryVoltage).toFixed(1) : "0.0"; color: appState.batteryPercent < 0.2 ? "#F85149" : "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: appState.connected ? fmt(appState.batteryVoltage, 1) : "0.0"; color: appState.batteryPercent < 0.2 ? "#F85149" : "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                             Text { text: "V"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                         }
                     }
@@ -267,7 +273,8 @@ Item {
                         ctx.fillStyle = "#E6EDF3"
                         ctx.font = "bold 10px Consolas"
                         ctx.textAlign = "center"
-                        ctx.fillText((appState.yaw || 0).toFixed(0) + "\u00B0", cx, cy + r + 6)
+                        var yawStr = fmt(appState.yaw || 0, 0)
+                        ctx.fillText(yawStr + "\u00B0", cx, cy + r + 6)
                     }
                 }
 
@@ -443,9 +450,9 @@ Item {
 
                         ctx.fillStyle = "#C9D1D9"; ctx.font = "10px monospace"; ctx.textAlign = "left"
                         ctx.fillText(
-                            "(" + Number(appState.positionX).toFixed(1) + ", " +
-                            Number(appState.positionY).toFixed(1) + ", " +
-                            Number(appState.positionZ).toFixed(1) + ")",
+                            "(" + fmt(appState.positionX, 1) + ", " +
+                            fmt(appState.positionY, 1) + ", " +
+                            fmt(appState.positionZ, 1) + ")",
                             uavPx + 16, uavPy + 4
                         )
                     }
@@ -801,8 +808,39 @@ Item {
 
             // ── Data View ──
             Item {
+                id: dataView
                 anchors.fill: parent
                 visible: centerView === 2
+
+                // 本地累积的 Zenith 状态快照（stdout 风格）
+                property string zenithStateLog: ""
+
+                Timer {
+                    running: dataView.visible && appState.connected
+                    interval: 1000
+                    repeat: true
+                    onTriggered: {
+                        function f(v, d) { return Number(v).toFixed(d === undefined ? 2 : d) }
+                        function pad(s, n) { s = String(s); while (s.length < n) s += " "; return s }
+                        var now = new Date().toTimeString().substring(0, 8)
+                        var snap = "[" + now + "] " + ">>>>>>>>>>>>>>>>>>>> UAV State <<<<<<<<<<<<<<<<<<<<\n"
+                            + "PX4 Status   : [ " + (appState.connected ? "Connected" : "Disconnected") + " ] "
+                            + "[ " + (appState.armed ? "Armed" : "DisArmed") + " ] "
+                            + "[ " + (appState.flightMode || "UNKNOWN") + " ]\n"
+                            + "Location     : [ " + (appState.locationSource || "?") + " ]\n"
+                            + "Odom Status  : [ " + (appState.odomValid ? "Valid" : "Invalid") + " ]\n"
+                            + "VINS_pos [m] : X=" + f(appState.vinsPositionX) + "  Y=" + f(appState.vinsPositionY) + "  Z=" + f(appState.vinsPositionZ) + "\n"
+                            + "UAV_pos [m]  : X=" + f(appState.positionX) + "  Y=" + f(appState.positionY) + "  Z=" + f(appState.positionZ) + "\n"
+                            + "UAV_vel [m/s]: X=" + f(appState.velocityX) + "  Y=" + f(appState.velocityY) + "  Z=" + f(appState.velocityZ) + "\n"
+                            + "UAV_att [deg]: R=" + f(appState.roll) + "  P=" + f(appState.pitch) + "  Y=" + f(appState.yaw) + "\n"
+                            + "Battery      : " + f(appState.batteryVoltage) + " V  " + f(appState.batteryPercent * 100, 0) + "%\n\n"
+                        dataView.zenithStateLog = snap + dataView.zenithStateLog
+                        // 限制总长度，保留约最近 50 条快照
+                        if (dataView.zenithStateLog.length > 30000) {
+                            dataView.zenithStateLog = dataView.zenithStateLog.substring(0, 30000)
+                        }
+                    }
+                }
 
                 Column {
                     anchors.fill: parent
@@ -811,11 +849,11 @@ Item {
 
                     // Message feedback
                     Rectangle {
-                        width: parent.width; height: 80
+                        width: parent.width; height: 60
                         radius: 8; color: "#161B22"; border.color: "#30363D"
 
                         Column {
-                            anchors.fill: parent; anchors.margins: 10; spacing: 6
+                            anchors.fill: parent; anchors.margins: 10; spacing: 4
                             Text { text: "消息反馈"; color: "#8B949E"; font.pixelSize: 11; font.bold: true }
                             Rectangle { width: parent.width; height: 1; color: "#262C36" }
                             Text {
@@ -828,7 +866,7 @@ Item {
 
                     // Flight recorder
                     Rectangle {
-                        width: parent.width; height: 80
+                        width: parent.width; height: 72
                         radius: 8; color: "#161B22"; border.color: "#30363D"
 
                         Column {
@@ -868,10 +906,45 @@ Item {
                         }
                     }
 
+                    // Zenith 状态控制台（1Hz 累计快照，stdout 风格）
+                    Rectangle {
+                        width: parent.width
+                        height: (parent.height - 60 - 72 - 30) * 0.6
+                        radius: 8; color: "#0D1117"; border.color: "#30363D"
+
+                        Column {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 6
+                            Row {
+                                width: parent.width; spacing: 8
+                                Text { text: "Zenith 状态"; color: "#8B949E"; font.pixelSize: 11; font.bold: true }
+                                Item { width: parent.width - 80; height: 1 }
+                                Text {
+                                    text: "清空"; color: "#58A6FF"; font.pixelSize: 10
+                                    MouseArea {
+                                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                        onClicked: dataView.zenithStateLog = ""
+                                    }
+                                }
+                            }
+                            Rectangle { width: parent.width; height: 1; color: "#262C36" }
+                            ScrollView {
+                                width: parent.width
+                                height: parent.parent.height - 40
+                                clip: true
+                                TextArea {
+                                    readOnly: true; wrapMode: TextArea.NoWrap
+                                    text: dataView.zenithStateLog
+                                    font.pixelSize: 11; font.family: "Consolas"; color: "#7EE787"
+                                    background: null
+                                }
+                            }
+                        }
+                    }
+
                     // Protocol log
                     Rectangle {
                         width: parent.width
-                        height: parent.height - 80 - 80 - 20
+                        height: (parent.height - 60 - 72 - 30) * 0.4
                         radius: 8; color: "#161B22"; border.color: "#30363D"
 
                         Column {
@@ -945,30 +1018,19 @@ Item {
 
                         Row {
                             spacing: 16
-                            DashDot { dotColor: appState.connected && appState.heartbeatLink === "OK" ? "#3FB950" : "#F85149"; label: "Heartbeat" }
-                            DashDot { dotColor: appState.connected && appState.videoLink === "OK" ? "#3FB950" : "#484F58"; label: "Video" }
-                            DashDot { dotColor: appState.connected && appState.rcLink === "OK" ? "#3FB950" : "#484F58"; label: "RC" }
+                            DashDot { dotColor: appState.connected ? "#3FB950" : "#F85149"; label: "Link" }
+                            DashDot { dotColor: appState.connected && appState.armed ? "#FFA657" : "#484F58"; label: "Armed" }
+                            DashDot { dotColor: appState.connected && appState.locationSource !== "UNKNOWN" ? "#3FB950" : "#484F58"; label: "VIO" }
                         }
-                    }
 
-                    Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
-
-                    // ── TELEMETRY — 2-column card grid ──
-                    Column {
-                        width: parent.width - 20; spacing: 6
-                        Text { text: "TELEMETRY"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
-
-                        Grid {
-                            columns: 2; spacing: 6; width: parent.width
-
-                            TelCard { icon: "\u2699"; iconColor: "#58A6FF"; label: "CTRL MODE"; value: appState.connected ? appState.controllerMode : "--"; unit: "" }
-                            TelCard { icon: "\u25B6"; iconColor: "#3FB950"; label: "CTRL STATE"; value: appState.connected ? appState.controlState : "--"; unit: "" }
-                            TelCard { icon: "\u2691"; iconColor: "#BC8CFF"; label: "MISSION"; value: appState.connected ? appState.missionMode : "--"; unit: "" }
-                            TelCard { icon: "\u27A4"; iconColor: "#FFA657"; label: "STAGE"; value: appState.connected ? appState.missionStage : "--"; unit: "" }
-                            TelCard { icon: "\u2295"; iconColor: "#58A6FF"; label: "LOC SRC"; value: appState.connected ? appState.locationSource : "--"; unit: "" }
-                            TelCard { icon: "\u2302"; iconColor: "#3FB950"; label: "HOME DIST"; value: appState.connected ? Number(appState.homeDistance).toFixed(1) : "--"; unit: "m" }
-                            TelCard { icon: "\u21C4"; iconColor: "#FFA657"; label: "CMD SRC"; value: appState.connected ? appState.activeCommandSource : "--"; unit: "" }
-                            TelCard { icon: "\u26A0"; iconColor: appState.alertLevel === "NONE" || !appState.connected ? "#3FB950" : "#F85149"; label: "ALERT"; value: appState.connected ? appState.alertLevel : "--"; unit: "" }
+                        // ── 紧凑状态行 ──
+                        Row {
+                            width: parent.width; spacing: 0
+                            StatusChip { label: appState.connected ? appState.locationSource : "--"; chipColor: "#1F3D6F" }
+                            Item { width: 4; height: 1 }
+                            StatusChip { label: appState.connected ? Number(appState.homeDistance).toFixed(1) + "m" : "--"; chipColor: "#1A3D2E" }
+                            Item { width: 4; height: 1 }
+                            StatusChip { label: appState.connected ? Number(appState.batteryVoltage).toFixed(1) + "V" : "--"; chipColor: appState.batteryVoltage > 0 && appState.batteryVoltage < 14.0 ? "#6E1A1A" : "#1A3D2E" }
                         }
                     }
 
@@ -998,15 +1060,11 @@ Item {
                         Text { text: "NAVIGATION"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
 
                         TelemetryGroup { title: "位置 [m]"; labels: ["X","Y","Z"]
-                            values: appState.connected ? [ Number(appState.positionX).toFixed(2), Number(appState.positionY).toFixed(2), Number(appState.positionZ).toFixed(2) ] : ["--","--","--"] }
+                            values: appState.connected ? [ fmt(appState.positionX, 2), fmt(appState.positionY, 2), fmt(appState.positionZ, 2) ] : ["--","--","--"] }
                         TelemetryGroup { title: "速度 [m/s]"; labels: ["X","Y","Z"]
-                            values: appState.connected ? [ Number(appState.velocityX).toFixed(2), Number(appState.velocityY).toFixed(2), Number(appState.velocityZ).toFixed(2) ] : ["--","--","--"] }
+                            values: appState.connected ? [ fmt(appState.velocityX, 2), fmt(appState.velocityY, 2), fmt(appState.velocityZ, 2) ] : ["--","--","--"] }
                         TelemetryGroup { title: "姿态 [deg]"; labels: ["R","P","Y"]
-                            values: appState.connected ? [ Number(appState.roll).toFixed(1), Number(appState.pitch).toFixed(1), Number(appState.yaw).toFixed(1) ] : ["--","--","--"] }
-                        TelemetryGroup { title: "期望位置 [m]"; labels: ["X","Y","Z"]
-                            values: appState.connected ? [ Number(appState.desiredPositionX).toFixed(2), Number(appState.desiredPositionY).toFixed(2), Number(appState.desiredPositionZ).toFixed(2) ] : ["--","--","--"] }
-                        TelemetryGroup { title: "期望速度 [m/s]"; labels: ["X","Y","Z"]
-                            values: appState.connected ? [ Number(appState.desiredVelocityX).toFixed(2), Number(appState.desiredVelocityY).toFixed(2), Number(appState.desiredVelocityZ).toFixed(2) ] : ["--","--","--"] }
+                            values: appState.connected ? [ fmt(appState.roll, 1), fmt(appState.pitch, 1), fmt(appState.yaw, 1) ] : ["--","--","--"] }
                     }
 
                     Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
@@ -1029,6 +1087,11 @@ Item {
                             PrimaryButton { width: parent.width; height: 26; text: "当前点悬停"; fillColor: "#1F4E8C"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
                             PrimaryButton { width: parent.width; height: 26; text: "初始点悬停"; fillColor: "#1A5C30"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
                             PrimaryButton { width: parent.width; height: 26; text: "降落"; fillColor: "#6E1A1A"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
+
+                            Rectangle { width: parent.width; height: 1; color: "#262C36" }
+
+                            PrimaryButton { width: parent.width; height: 26; text: "VIO 重启"; fillColor: "#4A3060"; enabled: appState.connected
+                                onClicked: appState.sendRemoteScript("bash /home/orangepi/opi-drone-cxr-demo/vio_recovery.sh") }
                         }
                     }
 
@@ -1063,12 +1126,12 @@ Item {
                                 Column {
                                     width: (parent.width - 6) / 2; spacing: 3
                                     Text { text: "X [m]"; color: "#8B949E"; font.pixelSize: 9 }
-                                    MiniField { id: xField; width: parent.width; height: 26 }
+                                    MiniField { id: xField; width: parent.width; height: 26; liveValue: appState.positionX }
                                 }
                                 Column {
                                     width: (parent.width - 6) / 2; spacing: 3
                                     Text { text: "Y [m]"; color: "#8B949E"; font.pixelSize: 9 }
-                                    MiniField { id: yField; width: parent.width; height: 26 }
+                                    MiniField { id: yField; width: parent.width; height: 26; liveValue: appState.positionY }
                                 }
                             }
                             Row {
@@ -1076,18 +1139,35 @@ Item {
                                 Column {
                                     width: (parent.width - 6) / 2; spacing: 3
                                     Text { text: "Z [m]"; color: "#8B949E"; font.pixelSize: 9 }
-                                    MiniField { id: zField; width: parent.width; height: 26 }
+                                    MiniField { id: zField; width: parent.width; height: 26; liveValue: appState.positionZ }
                                 }
                                 Column {
                                     width: (parent.width - 6) / 2; spacing: 3
                                     Text { text: "Yaw [deg]"; color: "#8B949E"; font.pixelSize: 9 }
-                                    MiniField { id: yawField; width: parent.width; height: 26 }
+                                    MiniField { id: yawField; width: parent.width; height: 26; liveValue: appState.yaw }
                                 }
                             }
 
-                            PrimaryButton {
-                                width: parent.width; height: 30; text: "上传指令"; fillColor: "#1F6FEB"
-                                onClicked: appState.sendManualMove(manualModeBox.currentText, Number(xField.val || 0), Number(yField.val || 0), Number(zField.val || 0), Number(yawField.val || 0))
+                            Row {
+                                width: parent.width; spacing: 6
+                                PrimaryButton {
+                                    width: (parent.width - 6) * 0.65; height: 30; text: "上传指令"; fillColor: "#1F6FEB"
+                                    onClicked: appState.sendManualMove(
+                                        manualModeBox.currentText,
+                                        xField.userDirty ? Number(xField.text || 0) : appState.positionX,
+                                        yField.userDirty ? Number(yField.text || 0) : appState.positionY,
+                                        zField.userDirty ? Number(zField.text || 0) : appState.positionZ,
+                                        yawField.userDirty ? Number(yawField.text || 0) : appState.yaw)
+                                }
+                                PrimaryButton {
+                                    width: (parent.width - 6) * 0.35; height: 30; text: "重置"; fillColor: "#484F58"
+                                    onClicked: {
+                                        xField.userDirty = false; xField.text = Number(appState.positionX).toFixed(2)
+                                        yField.userDirty = false; yField.text = Number(appState.positionY).toFixed(2)
+                                        zField.userDirty = false; zField.text = Number(appState.positionZ).toFixed(2)
+                                        yawField.userDirty = false; yawField.text = Number(appState.yaw).toFixed(2)
+                                    }
+                                }
                             }
                         }
                     }
@@ -1210,10 +1290,28 @@ Item {
         Text { text: label; color: "#6E7681"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
     }
 
+    component StatusChip: Rectangle {
+        property string label: ""
+        property color chipColor: "#1F3D6F"
+        width: (parent.width - 8) / 3; height: 20; radius: 4
+        color: chipColor
+        Text { anchors.centerIn: parent; text: label; color: "#E6EDF3"; font.pixelSize: 10; font.bold: true; font.family: "Consolas" }
+    }
+
     component MiniField: TextField {
         id: rootField
         property alias val: rootField.text
-        color: "#E6EDF3"; font.pixelSize: 11; placeholderTextColor: "#6E7681"
-        background: Rectangle { radius: 5; color: "#21262D"; border.color: "#30363D" }
+        property real liveValue: 0.0
+        property bool userDirty: false
+        color: rootField.userDirty ? "#FFA657" : "#7EE787"
+        font.pixelSize: 11; placeholderTextColor: "#6E7681"
+        background: Rectangle {
+            radius: 5
+            color: "#21262D"
+            border.color: rootField.userDirty ? "#58A6FF" : "#30363D"
+        }
+        Component.onCompleted: text = Number(liveValue).toFixed(2)
+        onTextEdited: userDirty = true
+        onLiveValueChanged: if (!userDirty) text = Number(liveValue).toFixed(2)
     }
 }

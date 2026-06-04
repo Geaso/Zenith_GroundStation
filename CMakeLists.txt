@@ -8,8 +8,8 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
+find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network SerialPort)
+find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network SerialPort)
 
 set(APP_SOURCES
     src/main.cpp
@@ -30,6 +30,7 @@ set(APP_SOURCES
     src/ParamStore.cpp
     src/ParamStore.h
     src/ZenithProtocol.h
+    src/ZenithMsgPack.h
     resources/qml.qrc
 )
 
@@ -56,6 +57,7 @@ target_link_libraries(${PROJECT_NAME}
         Qt${QT_VERSION_MAJOR}::Quick
         Qt${QT_VERSION_MAJOR}::QuickControls2
         Qt${QT_VERSION_MAJOR}::Network
+        Qt${QT_VERSION_MAJOR}::SerialPort
 )
 
 if(QT_VERSION_MAJOR EQUAL 6)

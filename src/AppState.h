@@ -41,6 +41,10 @@ class AppState : public QObject
     Q_PROPERTY(double positionX READ positionX NOTIFY telemetryChanged)
     Q_PROPERTY(double positionY READ positionY NOTIFY telemetryChanged)
     Q_PROPERTY(double positionZ READ positionZ NOTIFY telemetryChanged)
+    Q_PROPERTY(double vinsPositionX READ vinsPositionX NOTIFY telemetryChanged)
+    Q_PROPERTY(double vinsPositionY READ vinsPositionY NOTIFY telemetryChanged)
+    Q_PROPERTY(double vinsPositionZ READ vinsPositionZ NOTIFY telemetryChanged)
+    Q_PROPERTY(bool odomValid READ odomValid NOTIFY telemetryChanged)
     Q_PROPERTY(double velocityX READ velocityX NOTIFY telemetryChanged)
     Q_PROPERTY(double velocityY READ velocityY NOTIFY telemetryChanged)
     Q_PROPERTY(double velocityZ READ velocityZ NOTIFY telemetryChanged)
@@ -65,6 +69,7 @@ class AppState : public QObject
     Q_PROPERTY(int udpPort READ udpPort NOTIFY linkSettingsChanged)
     Q_PROPERTY(int tcpPort READ tcpPort NOTIFY linkSettingsChanged)
     Q_PROPERTY(int heartbeatPort READ heartbeatPort NOTIFY linkSettingsChanged)
+    Q_PROPERTY(QObject* protocolClient READ protocolClientObj CONSTANT)
     Q_PROPERTY(QString udpLinkState READ udpLinkState NOTIFY linkStateChanged)
     Q_PROPERTY(QString tcpLinkState READ tcpLinkState NOTIFY linkStateChanged)
     Q_PROPERTY(QString heartbeatLinkState READ heartbeatLinkState NOTIFY linkStateChanged)
@@ -110,6 +115,10 @@ public:
     double positionX() const;
     double positionY() const;
     double positionZ() const;
+    double vinsPositionX() const;
+    double vinsPositionY() const;
+    double vinsPositionZ() const;
+    bool odomValid() const;
     double velocityX() const;
     double velocityY() const;
     double velocityZ() const;
@@ -147,13 +156,16 @@ public:
     Q_INVOKABLE void issueCommand(const QString &commandName);
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScriptAction(const QString &name, const QString &command, const QString &target);
+    Q_INVOKABLE void sendRemoteScript(const QString &cmd);
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);
     Q_INVOKABLE void switchLocationSource(int sourceIndex);
     Q_INVOKABLE void applyConnectionSettings(const QString &hostIp, int udpPort, int tcpPort, int heartbeatPort);
+    Q_INVOKABLE void applySerialSettings(const QString &portName, int baudRate);
     Q_INVOKABLE void connectProtocol();
     Q_INVOKABLE void disconnectProtocol();
     Q_INVOKABLE bool testProtocol();
+    QObject *protocolClientObj() const;
     Q_INVOKABLE void startRecording();
     Q_INVOKABLE void stopRecording();
     Q_INVOKABLE void requestParams(int module);
@@ -171,6 +183,7 @@ public:
     // Connection profile persistence
     Q_INVOKABLE QVariantList connectionProfiles() const;
     Q_INVOKABLE void saveConnectionProfile(const QString &name, const QString &ip, int udpPort, int tcpPort, int heartbeatPort);
+    Q_INVOKABLE void saveSerialConnectionProfile(const QString &name, const QString &portName, int baudRate);
     Q_INVOKABLE void deleteConnectionProfile(const QString &name);
     Q_INVOKABLE QVariantMap loadConnectionProfile(const QString &name) const;
     Q_INVOKABLE QString lastUsedProfile() const;
@@ -236,6 +249,10 @@ private:
     double m_positionX;
     double m_positionY;
     double m_positionZ;
+    double m_vinsPositionX = 0.0;
+    double m_vinsPositionY = 0.0;
+    double m_vinsPositionZ = 0.0;
+    bool m_odomValid = false;
     double m_velocityX;
     double m_velocityY;
     double m_velocityZ;

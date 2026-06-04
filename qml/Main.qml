@@ -13,6 +13,27 @@ ApplicationWindow {
     color: "#0D1117"
 
     property int currentPage: 0
+    property var savedProfileNames: []
+
+    // Helper: eliminate -0.0 display
+    function fmt(val, decimals) {
+        var s = Number(val).toFixed(decimals)
+        return (s.charAt(0) === '-' && parseFloat(s) === 0) ? s.substring(1) : s
+    }
+
+    function updateProfileNames() {
+        var profiles = appState.connectionProfiles()
+        var names = []
+        for (var i = 0; i < profiles.length; i++)
+            names.push(profiles[i].name)
+        savedProfileNames = names.length > 0 ? names : ["UAV1"]
+    }
+
+    Component.onCompleted: updateProfileNames()
+    Connections {
+        target: appState
+        function onProfilesChanged() { updateProfileNames() }
+    }
 
     Column {
         anchors.fill: parent
@@ -49,7 +70,8 @@ ApplicationWindow {
                     anchors.verticalCenter: parent.verticalCenter
                     Text {
                         id: protoLabel; anchors.centerIn: parent
-                        text: "TCP"; color: "#8B949E"; font.pixelSize: 10; font.bold: true
+                        text: appState.protocolClient.transportMode === 1 ? "Serial" : "TCP"
+                        color: "#8B949E"; font.pixelSize: 10; font.bold: true
                     }
                 }
 
@@ -60,7 +82,9 @@ ApplicationWindow {
                     anchors.verticalCenter: parent.verticalCenter
                     Text {
                         id: connAddr; anchors.centerIn: parent
-                        text: appState.remoteHostIp + ":" + appState.tcpPort
+                        text: appState.protocolClient.transportMode === 1
+                              ? appState.protocolClient.serialPortName + " @ " + appState.protocolClient.serialBaudRate
+                              : appState.remoteHostIp + ":" + appState.tcpPort
                         color: "#8B949E"; font.pixelSize: 11; font.family: "Consolas"
                     }
                 }
@@ -81,14 +105,36 @@ ApplicationWindow {
                     }
                 }
 
-                // Vehicle selector
+                // Vehicle selector (from saved profiles)
                 ComboBox {
-                    id: vehicleCombo; width: 80; height: 24
+                    id: vehicleCombo; width: Math.max(80, contentItem.implicitWidth + 28); height: 24
                     anchors.verticalCenter: parent.verticalCenter
-                    model: ["UAV1", "UAV2", "UAV3"]; currentIndex: 0
-                    onActivated: appState.selectVehicle(currentText)
+                    model: savedProfileNames; currentIndex: 0
+                    onActivated: {
+                        var name = currentText
+                        appState.selectVehicle(name)
+                        var profile = appState.loadConnectionProfile(name)
+                        if (profile && profile.name) {
+                            if (profile.type === "serial") {
+                                appState.applySerialSettings(profile.portName, profile.baudRate)
+                            } else {
+                                appState.applyConnectionSettings(profile.ip, profile.udp, profile.tcp, profile.heartbeat)
+                            }
+                        }
+                    }
                     background: Rectangle { radius: 5; color: "#21262D"; border.color: "#30363D" }
                     contentItem: Text { leftPadding: 8; text: vehicleCombo.currentText; color: "#E6EDF3"; font.pixelSize: 11; font.bold: true; verticalAlignment: Text.AlignVCenter }
+                    popup: Popup {
+                        y: vehicleCombo.height; width: vehicleCombo.width
+                        implicitHeight: contentItem.implicitHeight + 2; padding: 1
+                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: vehicleCombo.popup.visible ? vehicleCombo.delegateModel : null; ScrollIndicator.vertical: ScrollIndicator { } }
+                        background: Rectangle { radius: 6; color: "#21262D"; border.color: "#30363D" }
+                    }
+                    delegate: ItemDelegate {
+                        width: vehicleCombo.width; height: 26
+                        contentItem: Text { text: modelData; color: "#E6EDF3"; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter }
+                        background: Rectangle { color: hovered ? "#30363D" : "transparent" }
+                    }
                 }
 
                 // Gear → open connection dialog
@@ -107,11 +153,11 @@ ApplicationWindow {
                 anchors.right: parent.right; anchors.verticalCenter: parent.verticalCenter
                 anchors.rightMargin: 14; spacing: 10
 
-                // Mode badge
+                // Mode badge (PX4 flight mode)
                 HeaderBadge {
                     label: "Mode"
-                    value: appState.connected ? appState.execState : "--"
-                    accent: appState.execState === "FAILSAFE" ? "#F85149" : appState.execState === "DISARMED" ? "#8B949E" : "#3FB950"
+                    value: appState.connected ? appState.flightMode : "--"
+                    accent: appState.failsafe ? "#F85149" : appState.flightMode === "OFFBOARD" ? "#3FB950" : "#FFA657"
                 }
 
                 // Armed badge
@@ -142,21 +188,14 @@ ApplicationWindow {
 
                 // Battery voltage + percent
                 Text {
-                    text: appState.connected ? Number(appState.batteryVoltage).toFixed(1) + "V" : "--"
-                    color: "#C9D1D9"; font.pixelSize: 11; font.family: "Consolas"; font.bold: true
+                    text: appState.connected ? fmt(appState.batteryVoltage, 1) + "V" : "--"
+                    color: "#C9D1D9"; font.pixelSize: 13; font.family: "Consolas"; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
                     text: appState.connected ? Math.round(appState.batteryPercent * 100) + "%" : "--"
                     color: appState.batteryPercent < 0.2 ? "#F85149" : "#C9D1D9"
-                    font.pixelSize: 11; font.family: "Consolas"; font.bold: true
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-
-                // Altitude
-                Text {
-                    text: "Alt " + (appState.connected ? Number(appState.altitude).toFixed(1) : "--") + "m"
-                    color: "#8B949E"; font.pixelSize: 11; font.family: "Consolas"
+                    font.pixelSize: 13; font.family: "Consolas"; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
             }
@@ -243,9 +282,9 @@ ApplicationWindow {
     component StatusDot: Row {
         property color dotColor: "#3FB950"
         property string label: ""
-        spacing: 4; anchors.verticalCenter: parent.verticalCenter
-        Rectangle { width: 7; height: 7; radius: 3.5; color: dotColor; anchors.verticalCenter: parent.verticalCenter }
-        Text { text: label; color: "#6E7681"; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+        spacing: 5; anchors.verticalCenter: parent.verticalCenter
+        Rectangle { width: 8; height: 8; radius: 4; color: dotColor; anchors.verticalCenter: parent.verticalCenter }
+        Text { text: label; color: "#6E7681"; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
     }
 
     component NavIcon: Item {
@@ -280,23 +319,27 @@ ApplicationWindow {
     }
 
     // ══════════════════════════════════════
-    //  Connection Dialog (unchanged)
+    //  Connection Dialog (TCP + Serial)
     // ══════════════════════════════════════
     Dialog {
         id: connectionDialog
         modal: true
         width: 680
-        height: 620
+        height: 660
         x: (window.width - width) / 2
         y: (window.height - height) / 2
         padding: 0
         closePolicy: Dialog.CloseOnEscape | Dialog.CloseOnPressOutside
 
         property var savedProfiles: []
+        property int selectedTransportMode: 0  // 0=TCP, 1=Serial
 
         function refreshProfiles() { savedProfiles = appState.connectionProfiles() }
 
-        Component.onCompleted: refreshProfiles()
+        Component.onCompleted: {
+            refreshProfiles()
+            appState.protocolClient.refreshSerialPorts()
+        }
         Connections {
             target: appState
             function onProfilesChanged() { connectionDialog.refreshProfiles() }
@@ -354,10 +397,27 @@ ApplicationWindow {
                                         id: chipMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
                                         onClicked: {
                                             profileNameField.text = modelData.name
-                                            hostField.text = modelData.ip
-                                            udpField.text = String(modelData.udp)
-                                            tcpField.text = String(modelData.tcp)
-                                            heartbeatField.text = String(modelData.heartbeat)
+                                            if (modelData.type === "serial") {
+                                                connectionDialog.selectedTransportMode = 1
+                                                // Set serial port ComboBox to matching port
+                                                var ports = appState.protocolClient.availableSerialPorts
+                                                var idx = -1
+                                                for (var i = 0; i < ports.length; i++) {
+                                                    if (ports[i] === modelData.portName) { idx = i; break }
+                                                }
+                                                if (idx >= 0) serialPortCombo.currentIndex = idx
+                                                // Set baud rate ComboBox to matching rate
+                                                var bauds = [9600, 19200, 38400, 57600, 115200, 460800, 921600]
+                                                for (var j = 0; j < bauds.length; j++) {
+                                                    if (bauds[j] === modelData.baudRate) { baudRateCombo.currentIndex = j; break }
+                                                }
+                                            } else {
+                                                connectionDialog.selectedTransportMode = 0
+                                                hostField.text = modelData.ip
+                                                udpField.text = String(modelData.udp)
+                                                tcpField.text = String(modelData.tcp)
+                                                heartbeatField.text = String(modelData.heartbeat)
+                                            }
                                         }
                                     }
 
@@ -366,7 +426,12 @@ ApplicationWindow {
                                         Column {
                                             anchors.verticalCenter: parent.verticalCenter; spacing: 1
                                             Text { text: modelData.name; color: "#E6EDF3"; font.pixelSize: 11; font.bold: true }
-                                            Text { text: modelData.ip + ":" + modelData.tcp; color: "#6E7681"; font.pixelSize: 9 }
+                                            Text {
+                                                text: modelData.type === "serial"
+                                                      ? modelData.portName + " @ " + modelData.baudRate
+                                                      : modelData.ip + ":" + modelData.tcp
+                                                color: "#6E7681"; font.pixelSize: 9
+                                            }
                                         }
                                         Rectangle {
                                             width: 18; height: 18; radius: 4
@@ -388,7 +453,50 @@ ApplicationWindow {
                     }
                 }
 
-                // ── Connection fields ──
+                // ── Transport Mode Selector ──
+                Rectangle {
+                    width: 240; height: 32; radius: 6
+                    color: "#21262D"; border.color: "#30363D"
+
+                    Row {
+                        anchors.fill: parent; anchors.margins: 2; spacing: 2
+
+                        Rectangle {
+                            width: (parent.width - 2) / 2; height: parent.height; radius: 4
+                            color: connectionDialog.selectedTransportMode === 0 ? "#1F6FEB" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "TCP 网络"
+                                color: connectionDialog.selectedTransportMode === 0 ? "#FFFFFF" : "#8B949E"
+                                font.pixelSize: 12; font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: connectionDialog.selectedTransportMode = 0
+                            }
+                        }
+
+                        Rectangle {
+                            width: (parent.width - 2) / 2; height: parent.height; radius: 4
+                            color: connectionDialog.selectedTransportMode === 1 ? "#1F6FEB" : "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "串口数传"
+                                color: connectionDialog.selectedTransportMode === 1 ? "#FFFFFF" : "#8B949E"
+                                font.pixelSize: 12; font.bold: true
+                            }
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    connectionDialog.selectedTransportMode = 1
+                                    appState.protocolClient.refreshSerialPorts()
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Config Name (shared between both modes) ──
                 Rectangle {
                     width: parent.width; height: 54; radius: 8; color: "#21262D"; border.color: "#30363D"
                     Row {
@@ -397,12 +505,21 @@ ApplicationWindow {
                             spacing: 3
                             Text { text: "配置名称"; color: "#8B949E"; font.pixelSize: 10 }
                             TextField {
-                                id: profileNameField; width: 120; height: 28
+                                id: profileNameField; width: 200; height: 28
                                 text: appState.vehicleName; placeholderText: "UAV1-Indoor"
                                 color: "#E6EDF3"; font.pixelSize: 13
                                 background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
                             }
                         }
+                    }
+                }
+
+                // ── TCP Connection fields ──
+                Rectangle {
+                    visible: connectionDialog.selectedTransportMode === 0
+                    width: parent.width; height: 54; radius: 8; color: "#21262D"; border.color: "#30363D"
+                    Row {
+                        anchors.fill: parent; anchors.margins: 10; spacing: 8
                         Column {
                             spacing: 3
                             Text { text: "控制机 IP"; color: "#8B949E"; font.pixelSize: 10 }
@@ -417,7 +534,7 @@ ApplicationWindow {
                             spacing: 3
                             Text { text: "UDP"; color: "#8B949E"; font.pixelSize: 10 }
                             TextField {
-                                id: udpField; width: 70; height: 28
+                                id: udpField; width: 90; height: 28
                                 text: String(appState.udpPort); color: "#E6EDF3"; font.pixelSize: 13
                                 background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
                             }
@@ -426,7 +543,7 @@ ApplicationWindow {
                             spacing: 3
                             Text { text: "TCP"; color: "#8B949E"; font.pixelSize: 10 }
                             TextField {
-                                id: tcpField; width: 70; height: 28
+                                id: tcpField; width: 90; height: 28
                                 text: String(appState.tcpPort); color: "#E6EDF3"; font.pixelSize: 13
                                 background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
                             }
@@ -435,9 +552,92 @@ ApplicationWindow {
                             spacing: 3
                             Text { text: "Heartbeat"; color: "#8B949E"; font.pixelSize: 10 }
                             TextField {
-                                id: heartbeatField; width: 80; height: 28
+                                id: heartbeatField; width: 90; height: 28
                                 text: String(appState.heartbeatPort); color: "#E6EDF3"; font.pixelSize: 13
                                 background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+                            }
+                        }
+                    }
+                }
+
+                // ── Serial Connection fields ──
+                Rectangle {
+                    visible: connectionDialog.selectedTransportMode === 1
+                    width: parent.width; height: 54; radius: 8; color: "#21262D"; border.color: "#30363D"
+                    Row {
+                        anchors.fill: parent; anchors.margins: 10; spacing: 8
+                        Column {
+                            spacing: 3
+                            Text { text: "串口"; color: "#8B949E"; font.pixelSize: 10 }
+                            Row {
+                                spacing: 6
+                                ComboBox {
+                                    id: serialPortCombo; width: 160; height: 28
+                                    model: appState.protocolClient.availableSerialPorts
+                                    background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+                                    contentItem: Text {
+                                        leftPadding: 8; text: serialPortCombo.currentText
+                                        color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter
+                                    }
+                                    popup: Popup {
+                                        y: serialPortCombo.height; width: serialPortCombo.width
+                                        implicitHeight: contentItem.implicitHeight + 2
+                                        padding: 1
+                                        contentItem: ListView {
+                                            clip: true
+                                            implicitHeight: contentHeight
+                                            model: serialPortCombo.popup.visible ? serialPortCombo.delegateModel : null
+                                            ScrollIndicator.vertical: ScrollIndicator { }
+                                        }
+                                        background: Rectangle { radius: 6; color: "#21262D"; border.color: "#30363D" }
+                                    }
+                                    delegate: ItemDelegate {
+                                        width: serialPortCombo.width; height: 28
+                                        contentItem: Text { text: modelData; color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                        background: Rectangle { color: hovered ? "#30363D" : "transparent" }
+                                    }
+                                }
+                                Rectangle {
+                                    width: 28; height: 28; radius: 6
+                                    color: refreshMA.containsMouse ? "#30363D" : "#0D1117"
+                                    border.color: "#30363D"
+                                    Text { anchors.centerIn: parent; text: "\u21BB"; color: "#8B949E"; font.pixelSize: 14 }
+                                    MouseArea {
+                                        id: refreshMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                        onClicked: appState.protocolClient.refreshSerialPorts()
+                                    }
+                                }
+                            }
+                        }
+                        Column {
+                            spacing: 3
+                            Text { text: "波特率"; color: "#8B949E"; font.pixelSize: 10 }
+                            ComboBox {
+                                id: baudRateCombo; width: 120; height: 28
+                                model: [9600, 19200, 38400, 57600, 115200, 460800, 921600]
+                                currentIndex: 6  // default 921600
+                                background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+                                contentItem: Text {
+                                    leftPadding: 8; text: baudRateCombo.currentText
+                                    color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter
+                                }
+                                popup: Popup {
+                                    y: baudRateCombo.height; width: baudRateCombo.width
+                                    implicitHeight: contentItem.implicitHeight + 2
+                                    padding: 1
+                                    contentItem: ListView {
+                                        clip: true
+                                        implicitHeight: contentHeight
+                                        model: baudRateCombo.popup.visible ? baudRateCombo.delegateModel : null
+                                        ScrollIndicator.vertical: ScrollIndicator { }
+                                    }
+                                    background: Rectangle { radius: 6; color: "#21262D"; border.color: "#30363D" }
+                                }
+                                delegate: ItemDelegate {
+                                    width: baudRateCombo.width; height: 28
+                                    contentItem: Text { text: modelData; color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                    background: Rectangle { color: hovered ? "#30363D" : "transparent" }
+                                }
                             }
                         }
                     }
@@ -450,16 +650,36 @@ ApplicationWindow {
                         onClicked: {
                             var name = profileNameField.text.trim()
                             if (name.length === 0) name = appState.vehicleName
-                            appState.saveConnectionProfile(name, hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
+                            if (connectionDialog.selectedTransportMode === 1) {
+                                appState.saveSerialConnectionProfile(name, serialPortCombo.currentText, Number(baudRateCombo.currentText))
+                            } else {
+                                appState.saveConnectionProfile(name, hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
+                            }
                         }
                     }
                     PrimaryButton { width: 100; text: "应用设置"; fillColor: "#21262D"; textColor: "#FFA657"
-                        onClicked: appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
+                        onClicked: {
+                            if (connectionDialog.selectedTransportMode === 1) {
+                                appState.applySerialSettings(serialPortCombo.currentText, Number(baudRateCombo.currentText))
+                            } else {
+                                appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
+                            }
+                        }
                     }
                     PrimaryButton { width: 100; text: "连接测试"; fillColor: "#1F4E8C"
-                        onClicked: appState.testProtocol() }
+                        enabled: connectionDialog.selectedTransportMode === 0
+                        onClicked: appState.testProtocol()
+                    }
                     PrimaryButton { width: 100; text: "开始连接"; fillColor: "#1A6334"
-                        onClicked: { appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text)); appState.connectProtocol() } }
+                        onClicked: {
+                            if (connectionDialog.selectedTransportMode === 1) {
+                                appState.applySerialSettings(serialPortCombo.currentText, Number(baudRateCombo.currentText))
+                            } else {
+                                appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
+                            }
+                            appState.connectProtocol()
+                        }
+                    }
                     PrimaryButton { width: 100; text: "断开连接"; fillColor: "#6E1A1A"
                         onClicked: appState.disconnectProtocol() }
                 }
@@ -482,7 +702,7 @@ ApplicationWindow {
 
                 // ── Protocol log ──
                 Rectangle {
-                    width: parent.width; height: 200; radius: 8; color: "#0D1117"; border.color: "#30363D"
+                    width: parent.width; height: 160; radius: 8; color: "#0D1117"; border.color: "#30363D"
                     ScrollView {
                         anchors.fill: parent; anchors.margins: 8
                         TextArea {

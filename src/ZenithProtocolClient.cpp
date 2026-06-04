@@ -1,6 +1,7 @@
 #include "ZenithProtocolClient.h"
 
 #include "ZenithProtocol.h"
+#include "ZenithMsgPack.h"
 
 #include <QAbstractSocket>
 #include <QDataStream>
@@ -9,6 +10,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkProxy>
+
+#include <algorithm>
 
 namespace {
 constexpr char kMagic0 = 0x61;
@@ -91,21 +94,37 @@ QString ZenithProtocolClient::protocolLogText() const { return m_protocolLogText
 
 bool ZenithProtocolClient::isConnected() const
 {
+    if (m_transportMode == TransportMode::Serial) {
+        return m_serialPort.isOpen();
+    }
     return m_tcpSocket.state() == QAbstractSocket::ConnectedState;
 }
 
 bool ZenithProtocolClient::telemetryFresh() const
 {
+    if (m_transportMode == TransportMode::Serial) {
+        // Serial mode: all data arrives on one channel, check any rx timestamp
+        const qint64 lastRx = std::max({m_lastUdpRxMs, m_lastTcpRxMs, m_lastHeartbeatRxMs});
+        return lastRx > 0 && (nowMs() - lastRx) <= kUdpFreshnessTimeoutMs;
+    }
     return m_lastUdpRxMs > 0 && (nowMs() - m_lastUdpRxMs) <= kUdpFreshnessTimeoutMs;
 }
 
 bool ZenithProtocolClient::heartbeatFresh() const
 {
+    if (m_transportMode == TransportMode::Serial) {
+        // Serial mode: all data arrives on one channel, check any rx timestamp
+        const qint64 lastRx = std::max({m_lastUdpRxMs, m_lastTcpRxMs, m_lastHeartbeatRxMs});
+        return lastRx > 0 && (nowMs() - lastRx) <= kHeartbeatFreshnessTimeoutMs;
+    }
     return m_lastHeartbeatRxMs > 0 && (nowMs() - m_lastHeartbeatRxMs) <= kHeartbeatFreshnessTimeoutMs;
 }
 
 bool ZenithProtocolClient::canSendControlCommands() const
 {
+    if (m_transportMode == TransportMode::Serial) {
+        return m_active && m_serialPort.isOpen() && telemetryFresh();
+    }
     return m_active
         && m_tcpSocket.state() == QAbstractSocket::ConnectedState
         && telemetryFresh()
@@ -130,6 +149,22 @@ void ZenithProtocolClient::start()
     m_hasEverConnected = false;
     resetFreshness();
 
+    // Common timers for both transport modes
+    m_heartbeatCount = 0;
+    m_heartbeatTimer.start(kHeartbeatIntervalMs);
+    m_linkMonitorTimer.start();
+
+    if (m_transportMode == TransportMode::Serial) {
+        startSerial();
+    } else {
+        startNetwork();
+    }
+
+    updateLinkStates();
+}
+
+void ZenithProtocolClient::startNetwork()
+{
     // Bind UDP listener
     if (m_udpSocket.state() != QAbstractSocket::BoundState) {
         if (m_udpSocket.bind(QHostAddress::AnyIPv4, m_udpPort, QUdpSocket::ShareAddress | QUdpSocket::ReuseAddressHint)) {
@@ -148,29 +183,36 @@ void ZenithProtocolClient::start()
         }
     }
 
-    // Start heartbeat sending timer
-    m_heartbeatCount = 0;
-    m_heartbeatTimer.start(kHeartbeatIntervalMs);
-    m_linkMonitorTimer.start();
-
     // Connect persistent TCP
     m_pendingModeSelection = true;
     connectTcp();
-
-    updateLinkStates();
 }
 
 void ZenithProtocolClient::stop()
 {
     m_active = false;
-    m_tcpIntentionalDisconnect = true;
 
-    // Stop timers
-    m_reconnectTimer.stop();
+    // Stop common timers
     m_heartbeatTimer.stop();
     m_linkMonitorTimer.stop();
     m_modeSelectionAckTimer.stop();
     m_awaitingModeSelectionAck = false;
+
+    if (m_transportMode == TransportMode::Serial) {
+        stopSerial();
+    } else {
+        stopNetwork();
+    }
+
+    resetFreshness();
+    appendLog("Protocol client stopped");
+    updateLinkStates();
+}
+
+void ZenithProtocolClient::stopNetwork()
+{
+    m_tcpIntentionalDisconnect = true;
+    m_reconnectTimer.stop();
 
     // Close TCP
     disconnectTcp();
@@ -185,10 +227,6 @@ void ZenithProtocolClient::stop()
     // Close UDP & heartbeat server
     m_udpSocket.close();
     m_heartbeatServer.close();
-    resetFreshness();
-
-    appendLog("Protocol client stopped");
-    updateLinkStates();
 }
 
 bool ZenithProtocolClient::testConnection()
@@ -292,6 +330,18 @@ void ZenithProtocolClient::onReconnectTimer()
 // ---------------------------------------------------------------------------
 void ZenithProtocolClient::onHeartbeatTimer()
 {
+    if (m_transportMode == TransportMode::Serial) {
+        if (!m_serialPort.isOpen()) {
+            return;
+        }
+        QVariantMap payload;
+        payload.insert("count", static_cast<int>(m_heartbeatCount++));
+        payload.insert("message", QString());
+        const QByteArray frame = packFrame(ZenithProtocol::HEARTBEAT, m_robotId, payload);
+        m_serialPort.write(frame);
+        return;
+    }
+
     if (m_tcpSocket.state() != QAbstractSocket::ConnectedState) {
         return;
     }
@@ -309,6 +359,18 @@ void ZenithProtocolClient::onHeartbeatTimer()
 // ---------------------------------------------------------------------------
 void ZenithProtocolClient::sendTcpMessage(int msgId, const QVariantMap &payload, int robotId)
 {
+    if (m_transportMode == TransportMode::Serial) {
+        if (!m_serialPort.isOpen()) {
+            appendLog("Serial send skipped: port not open");
+            updateLinkStates();
+            return;
+        }
+        const QByteArray packet = packFrame(msgId, robotId, payload);
+        m_serialPort.write(packet);
+        appendLog(QString("Serial send msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
+        return;
+    }
+
     const bool isControlMessage = msgId == ZenithProtocol::UAVCOMMAND
         || msgId == ZenithProtocol::UAVSETUP
         || msgId == ZenithProtocol::CUSTOMDATASEGMENT_1;
@@ -332,6 +394,17 @@ void ZenithProtocolClient::sendTcpMessage(int msgId, const QVariantMap &payload,
 
 void ZenithProtocolClient::sendUdpMessage(int msgId, const QVariantMap &payload, int robotId)
 {
+    if (m_transportMode == TransportMode::Serial) {
+        if (!m_serialPort.isOpen()) {
+            appendLog("Serial send skipped: port not open");
+            return;
+        }
+        const QByteArray packet = packFrame(msgId, robotId, payload);
+        m_serialPort.write(packet);
+        appendLog(QString("Serial send msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
+        return;
+    }
+
     if (m_udpSocket.state() != QAbstractSocket::BoundState) {
         appendLog("UDP send skipped: listener not bound");
         return;
@@ -415,6 +488,14 @@ ZenithProtocolClient::DecodedFrame ZenithProtocolClient::tryDecodeFrame(const QB
         | (static_cast<quint32>(static_cast<quint8>(buffer[3])) << 8)
         | (static_cast<quint32>(static_cast<quint8>(buffer[4])) << 16)
         | (static_cast<quint32>(static_cast<quint8>(buffer[5])) << 24);
+
+    // Sanity check: Zenith frames should never exceed 4KB.
+    // A corrupted magic match with huge payload size would stall the parser forever.
+    if (payloadSize > 4096) {
+        result.totalBytes = 2; // skip past false magic bytes
+        return result;
+    }
+
     const int totalSize = static_cast<int>(payloadSize) + kFrameOverhead;
     if (buffer.size() < totalSize) {
         return result;
@@ -430,14 +511,23 @@ ZenithProtocolClient::DecodedFrame ZenithProtocolClient::tryDecodeFrame(const QB
     }
 
     const QByteArray payloadBytes = frame.mid(8, static_cast<int>(payloadSize));
-    const QJsonDocument document = QJsonDocument::fromJson(payloadBytes);
-    if (!document.isObject()) {
-        return result;
-    }
 
     result.msgId = static_cast<quint8>(frame[6]);
     result.robotId = static_cast<quint8>(frame[7]);
-    result.payload = document.object().toVariantMap();
+
+    // Auto-detect: MsgPack (首字节 0x80-0x8F/0xDE/0xDF) vs JSON (首字节 '{')
+    if (ZenithMsgPack::isMsgPack(payloadBytes)) {
+        if (!ZenithMsgPack::decodeMsgPack(payloadBytes, result.payload)) {
+            return result;
+        }
+    } else {
+        const QJsonDocument document = QJsonDocument::fromJson(payloadBytes);
+        if (!document.isObject()) {
+            return result;
+        }
+        result.payload = document.object().toVariantMap();
+    }
+
     result.valid = true;
     return result;
 }
@@ -478,6 +568,56 @@ void ZenithProtocolClient::updateLinkStates()
 {
     const qint64 now = nowMs();
 
+    if (m_transportMode == TransportMode::Serial) {
+        // Serial mode: single channel, simplified state reporting
+        const qint64 lastRx = std::max({m_lastUdpRxMs, m_lastTcpRxMs, m_lastHeartbeatRxMs});
+        const bool portOpen = m_serialPort.isOpen();
+        const bool fresh = lastRx > 0 && (now - lastRx) <= kUdpFreshnessTimeoutMs;
+
+        QString serialState;
+        if (!m_active) {
+            serialState = QStringLiteral("IDLE");
+        } else if (portOpen && fresh) {
+            serialState = QStringLiteral("CONNECTED");
+        } else if (portOpen && lastRx > 0) {
+            serialState = QStringLiteral("STALE");
+        } else if (portOpen) {
+            serialState = QStringLiteral("WAITING");
+        } else {
+            serialState = QStringLiteral("DISCONNECTED");
+        }
+
+        // Mirror serial state to all three channel states for UI consistency
+        m_tcpState = serialState;
+        m_udpState = serialState;
+        m_heartbeatState = serialState;
+
+        QString overallState = QStringLiteral("STOPPED");
+        if (m_active) {
+            if (portOpen && fresh && !m_awaitingModeSelectionAck) {
+                overallState = QStringLiteral("CONNECTED");
+            } else if (portOpen && m_awaitingModeSelectionAck) {
+                overallState = QStringLiteral("HANDSHAKING");
+            } else if (portOpen) {
+                overallState = QStringLiteral("DEGRADED");
+            } else {
+                overallState = QStringLiteral("DISCONNECTED");
+            }
+        }
+
+        auto ageText = [now](qint64 ts) -> QString {
+            if (ts <= 0) return QStringLiteral("never");
+            return QString::number((now - ts) / 1000.0, 'f', 1) + QStringLiteral("s");
+        };
+
+        m_connectionSummary = QString("%1 | SERIAL=%2(last=%3)")
+            .arg(overallState, serialState, ageText(lastRx));
+        emit transportStateChanged(m_connectionSummary);
+        emit linkStatesChanged();
+        return;
+    }
+
+    // Network mode: original 3-channel state logic
     if (!m_active) {
         m_udpState = QStringLiteral("IDLE");
     } else if (m_udpSocket.state() != QAbstractSocket::BoundState) {
@@ -552,6 +692,13 @@ void ZenithProtocolClient::updateLinkStates()
 // ---------------------------------------------------------------------------
 void ZenithProtocolClient::processBuffer(QByteArray &buffer)
 {
+    // Guard: if buffer grows beyond 16KB, discard stale data (radio corruption recovery)
+    if (buffer.size() > 16384) {
+        appendLog(QString("Buffer overflow (%1 bytes), flushing").arg(buffer.size()));
+        buffer.clear();
+        return;
+    }
+
     while (!buffer.isEmpty()) {
         const DecodedFrame decoded = tryDecodeFrame(buffer);
         if (decoded.totalBytes > 0 && !decoded.valid) {
@@ -633,4 +780,129 @@ void ZenithProtocolClient::noteTcpRx()
 qint64 ZenithProtocolClient::nowMs() const
 {
     return QDateTime::currentMSecsSinceEpoch();
+}
+
+// ---------------------------------------------------------------------------
+// Serial transport
+// ---------------------------------------------------------------------------
+void ZenithProtocolClient::startSerial()
+{
+    if (m_serialPortName.isEmpty()) {
+        appendLog("Serial start failed: no port name configured");
+        return;
+    }
+
+    m_serialPort.setPortName(m_serialPortName);
+    m_serialPort.setBaudRate(m_serialBaudRate);
+    m_serialPort.setDataBits(QSerialPort::Data8);
+    m_serialPort.setParity(QSerialPort::NoParity);
+    m_serialPort.setStopBits(QSerialPort::OneStop);
+    m_serialPort.setFlowControl(QSerialPort::NoFlowControl);
+
+    connect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
+    connect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
+
+    if (m_serialPort.open(QIODevice::ReadWrite)) {
+        m_serialRecvBuffer.clear();
+        appendLog(QString("Serial port opened: %1 @ %2").arg(m_serialPortName).arg(m_serialBaudRate));
+
+        m_pendingModeSelection = true;
+        m_awaitingModeSelectionAck = true;
+        m_modeSelectionRetries = 0;
+        sendModeSelection(true);
+        m_modeSelectionAckTimer.start(kModeSelectionAckTimeoutMs);
+    } else {
+        appendLog(QString("Serial open failed: %1").arg(m_serialPort.errorString()));
+    }
+}
+
+void ZenithProtocolClient::stopSerial()
+{
+    disconnect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
+    disconnect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
+
+    if (m_serialPort.isOpen()) {
+        m_serialPort.close();
+    }
+    m_serialRecvBuffer.clear();
+}
+
+void ZenithProtocolClient::onSerialReadyRead()
+{
+    m_serialRecvBuffer.append(m_serialPort.readAll());
+
+    // Update ALL freshness timestamps since serial is a single multiplexed channel
+    const qint64 now = nowMs();
+    m_lastTcpRxMs = now;
+    m_lastUdpRxMs = now;
+    m_lastHeartbeatRxMs = now;
+
+    processBuffer(m_serialRecvBuffer);
+}
+
+void ZenithProtocolClient::onSerialError(QSerialPort::SerialPortError error)
+{
+    if (error == QSerialPort::NoError) {
+        return;
+    }
+    appendLog(QString("Serial error: %1").arg(m_serialPort.errorString()));
+    updateLinkStates();
+}
+
+// ---------------------------------------------------------------------------
+// Transport mode property accessors
+// ---------------------------------------------------------------------------
+int ZenithProtocolClient::transportMode() const
+{
+    return static_cast<int>(m_transportMode);
+}
+
+void ZenithProtocolClient::setTransportMode(int mode)
+{
+    const auto newMode = static_cast<TransportMode>(mode);
+    if (m_transportMode != newMode) {
+        m_transportMode = newMode;
+        emit transportModeChanged();
+    }
+}
+
+QString ZenithProtocolClient::serialPortName() const
+{
+    return m_serialPortName;
+}
+
+void ZenithProtocolClient::setSerialPortName(const QString &name)
+{
+    if (m_serialPortName != name) {
+        m_serialPortName = name;
+        emit serialPortNameChanged();
+    }
+}
+
+int ZenithProtocolClient::serialBaudRate() const
+{
+    return m_serialBaudRate;
+}
+
+void ZenithProtocolClient::setSerialBaudRate(int baud)
+{
+    if (m_serialBaudRate != baud) {
+        m_serialBaudRate = baud;
+        emit serialBaudRateChanged();
+    }
+}
+
+QStringList ZenithProtocolClient::availableSerialPorts() const
+{
+    QStringList ports;
+    const auto infos = QSerialPortInfo::availablePorts();
+    for (const QSerialPortInfo &info : infos) {
+        ports.append(info.portName());
+    }
+    return ports;
+}
+
+void ZenithProtocolClient::refreshSerialPorts()
+{
+    emit availableSerialPortsChanged();
 }
