@@ -225,6 +225,36 @@ void CommandDispatcher::stopRemoteModule(const QString &moduleName, const QStrin
                          QStringLiteral("/home/jetson/Zenith_ws/scripts/modules/stop_module.sh ") + nodePattern);
 }
 
+quint32 CommandDispatcher::sendWaypoint(double x, double y, double z, double yawRad, bool isContinuation)
+{
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, QStringLiteral("Mission Waypoint"))) {
+        return 0;
+    }
+
+    const quint32 localId = m_commandId++;
+    const quint32 wireId = isContinuation ? (localId | 0x80000000u) : localId;
+
+    QVariantMap payload;
+    payload.insert("Agent_CMD", 4);   // Move
+    payload.insert("Control_Level", 0);
+    payload.insert("Move_mode", 0);   // XYZ_POS
+    payload.insert("position_ref", QVariantList{x, y, z});
+    payload.insert("velocity_ref", QVariantList{0.0, 0.0, 0.0});
+    payload.insert("acceleration_ref", QVariantList{0.0, 0.0, 0.0});
+    payload.insert("yaw_ref", yawRad);  // radians, drone-side: yaw_des = wrap_to_nearest_pi(...)
+    payload.insert("Yaw_Rate_Mode", false);
+    payload.insert("yaw_rate_ref", 0.0);
+    payload.insert("att_ref", QVariantList{0.0, 0.0, 0.0, 0.0});
+    payload.insert("latitude", 0.0);
+    payload.insert("longitude", 0.0);
+    payload.insert("altitude", z);
+    // qint64 保留无符号 32 位的高位 bit31（JSON 数字会被 .so 转回 uint32）
+    payload.insert("Command_ID", static_cast<qint64>(wireId));
+
+    sendUavCommand(payload, QString("Waypoint #%1 %2").arg(localId).arg(isContinuation ? "(cont)" : "(last)"));
+    return localId;
+}
+
 void CommandDispatcher::sendUavCommand(const QVariantMap &payload, const QString &humanReadableName)
 {
     m_protocolClient->sendTcpMessage(ZenithProtocol::UAVCOMMAND, payload, m_telemetryStore->currentVehicleId());

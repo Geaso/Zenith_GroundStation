@@ -84,6 +84,9 @@ class AppState : public QObject
     Q_PROPERTY(double recordingElapsed READ recordingElapsed NOTIFY telemetryChanged)
     Q_PROPERTY(QStringList runningNodes READ runningNodes NOTIFY telemetryChanged)
     Q_PROPERTY(QString moduleExecFeedback READ moduleExecFeedback NOTIFY telemetryChanged)
+    Q_PROPERTY(QString missionState READ missionState NOTIFY missionStateChanged)
+    Q_PROPERTY(int missionCurrentIndex READ missionCurrentIndex NOTIFY missionStateChanged)
+    Q_PROPERTY(int missionTotal READ missionTotal NOTIFY missionStateChanged)
 public:
     explicit AppState(QObject *parent = nullptr);
     ~AppState() override;
@@ -179,6 +182,13 @@ public:
     Q_INVOKABLE bool isModuleRunning(const QString &nodePattern) const;
     QStringList runningNodes() const;
     QString moduleExecFeedback() const;
+    QString missionState() const;
+    int missionCurrentIndex() const;
+    int missionTotal() const;
+
+    // 航线任务（waypoint mission）：地面站按 callback 顺序下发，超时由飞机端 FAILSAFE LAND
+    Q_INVOKABLE void startMission(const QVariantList &waypoints);
+    Q_INVOKABLE void abortMission();
 
     // Connection profile persistence
     Q_INVOKABLE QVariantList connectionProfiles() const;
@@ -200,11 +210,14 @@ signals:
     void linkSettingsChanged();
     void recordingChanged();
     void profilesChanged();
+    void missionStateChanged();
 
 private:
     QVariantList toVariantList(const QList<QPointF> &points) const;
     void syncFromStore();
     void bootstrapDemoTelemetry();
+    void sendNextMissionWaypoint();
+    void checkMissionProgress();
 
     QString m_vehicleName;
     QString m_flightStatus;
@@ -269,6 +282,12 @@ private:
     double m_homeDistance;
     QList<QPointF> m_pathPoints;
     QList<QPointF> m_waypointPoints;
+    // 航线任务状态
+    QVariantList m_missionWaypoints;     // [{x,y,z,yaw}] (yaw 弧度，启动时按航迹计算)
+    int m_missionCurrentIndex = -1;       // -1 = 未运行
+    quint32 m_missionExpectedReachId = 0; // 当前正在等待飞机回报的 Command_ID
+    quint32 m_lastSeenReachedId = 0;      // 用于检测 lastReachedWaypointId 变化
+    QString m_missionState = "IDLE";      // IDLE / RUNNING / DONE / ABORTED
     TelemetryStore *m_telemetryStore = nullptr;
     ZenithProtocolClient *m_protocolClient = nullptr;
     CommandDispatcher *m_commandDispatcher = nullptr;

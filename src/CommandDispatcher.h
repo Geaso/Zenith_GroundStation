@@ -20,6 +20,10 @@ public:
     Q_INVOKABLE void executeRemoteCommand(const QString &moduleName, const QString &command);
     Q_INVOKABLE void stopRemoteModule(const QString &moduleName, const QString &nodePattern);
 
+    // 航线任务：发送单个航点（XYZ_POS）。isContinuation=true 时把 Command_ID bit31 置位，
+    // 飞机端 bridge 解析为 waypoint_mission=true 启动超时看门狗。返回本地（剥离 bit31 后）ID。
+    quint32 sendWaypoint(double x, double y, double z, double yawRad, bool isContinuation);
+
 private:
     void sendUavCommand(const QVariantMap &payload, const QString &humanReadableName);
     void sendUavSetup(const QVariantMap &payload, const QString &humanReadableName);

@@ -42,6 +42,7 @@ QString TelemetryStore::controllerMode() const { return m_controllerMode; }
 QString TelemetryStore::controlState() const { return m_controlState; }
 QString TelemetryStore::execState() const { return m_execState; }
 QString TelemetryStore::missionMode() const { return m_missionMode; }
+quint32 TelemetryStore::lastReachedWaypointId() const { return m_lastReachedWaypointId; }
 QString TelemetryStore::activeCommandSource() const { return m_activeCommandSource; }
 QString TelemetryStore::pendingRequest() const { return m_pendingRequest; }
 bool TelemetryStore::requestActive() const { return m_requestActive; }
@@ -289,6 +290,8 @@ void TelemetryStore::applyUavControlState(const QVariantMap &payload)
         m_pendingRequest = pendingRequests.value(payload.value("pending_request").toInt(), "UNKNOWN");
     if (payload.contains("request_active"))
         m_requestActive = payload.value("request_active").toBool();
+    if (payload.contains("last_reached_waypoint_id"))
+        m_lastReachedWaypointId = payload.value("last_reached_waypoint_id").toUInt();
 
     emit telemetryChanged();
 }

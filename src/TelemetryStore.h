@@ -20,6 +20,7 @@ public:
     QString activeCommandSource() const;
     QString pendingRequest() const;
     bool requestActive() const;
+    quint32 lastReachedWaypointId() const;
     QString locationSource() const;
     QString gpsStatus() const;
     int gpsFixType() const;
@@ -100,6 +101,7 @@ private:
     QString m_activeCommandSource;
     QString m_pendingRequest;
     bool m_requestActive = false;
+    quint32 m_lastReachedWaypointId = 0;
     QString m_locationSource;
     QString m_gpsStatus;
     int m_gpsFixType = 0;       // raw gps_status integer (0=NO_GPS .. 6=RTK_FIXED)

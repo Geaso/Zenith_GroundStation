@@ -44,6 +44,7 @@ inline QString keyName(uint8_t key) {
     case 35: return QStringLiteral("active_command_source");
     case 36: return QStringLiteral("pending_request");
     case 37: return QStringLiteral("request_active");
+    case 38: return QStringLiteral("last_reached_waypoint_id");
     // Heartbeat (msg_id=6)
     case 40: return QStringLiteral("count");
     case 41: return QStringLiteral("message");

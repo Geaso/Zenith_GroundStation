@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QSettings>
+#include <cmath>
 
 AppState::AppState(QObject *parent)
     : QObject(parent)
@@ -451,6 +452,9 @@ void AppState::syncFromStore()
     m_commandAck = m_telemetryStore->commandAck();
     m_pathPoints = m_telemetryStore->pathPoints();
     m_waypointPoints = m_telemetryStore->waypointPoints();
+
+    // 航线任务推进：检查是否到达当前航点的 Command_ID
+    checkMissionProgress();
 }
 
 // ── Connection profile persistence ──
@@ -694,4 +698,103 @@ void AppState::bootstrapDemoTelemetry()
     heartbeat.insert("count", 1);
     heartbeat.insert("message", "Zenith Link Ready");
     m_telemetryStore->applyHeartbeat(heartbeat);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  航线任务（waypoint mission）：地面站按 callback 顺序下发
+//  - yaw 按 B 方案：每点朝向下一点（atan2），末点沿用倒数第二段方向
+//  - Command_ID bit31 编码 waypoint_mission（true 表示后面还有航点）
+//  - 到达检测在飞机端，回传 last_reached_waypoint_id；超时未推进 → FAILSAFE LAND
+// ─────────────────────────────────────────────────────────────
+QString AppState::missionState() const { return m_missionState; }
+int AppState::missionCurrentIndex() const { return m_missionCurrentIndex; }
+int AppState::missionTotal() const { return m_missionWaypoints.size(); }
+
+void AppState::startMission(const QVariantList &waypoints)
+{
+    if (waypoints.isEmpty()) {
+        m_telemetryStore->setCommandFeedback("Mission", "Empty waypoint list");
+        return;
+    }
+    if (!m_protocolClient->canSendControlCommands()) {
+        m_telemetryStore->setCommandFeedback("Mission", "Blocked: link not CONNECTED");
+        return;
+    }
+
+    m_missionWaypoints.clear();
+    const int n = waypoints.size();
+    for (int i = 0; i < n; ++i) {
+        const QVariantMap wp = waypoints.at(i).toMap();
+        const double x = wp.value("wx").toDouble();
+        const double y = wp.value("wy").toDouble();
+        const double z = wp.value("wz").toDouble();
+        double yawRad = 0.0;
+        if (i + 1 < n) {
+            const QVariantMap next = waypoints.at(i + 1).toMap();
+            yawRad = std::atan2(next.value("wy").toDouble() - y,
+                                next.value("wx").toDouble() - x);
+        } else if (i > 0) {
+            const QVariantMap prev = waypoints.at(i - 1).toMap();
+            yawRad = std::atan2(y - prev.value("wy").toDouble(),
+                                x - prev.value("wx").toDouble());
+        }
+        QVariantMap entry;
+        entry.insert("x", x);
+        entry.insert("y", y);
+        entry.insert("z", z);
+        entry.insert("yaw", yawRad);
+        m_missionWaypoints.append(entry);
+    }
+
+    m_lastSeenReachedId = m_telemetryStore->lastReachedWaypointId();
+    m_missionCurrentIndex = 0;
+    m_missionState = QStringLiteral("RUNNING");
+    sendNextMissionWaypoint();
+    emit missionStateChanged();
+}
+
+void AppState::abortMission()
+{
+    if (m_missionState != QStringLiteral("RUNNING")) return;
+    m_missionState = QStringLiteral("ABORTED");
+    m_missionCurrentIndex = -1;
+    m_missionExpectedReachId = 0;
+    m_commandDispatcher->issueQuickAction(QStringLiteral("Hover Here"));
+    emit missionStateChanged();
+}
+
+void AppState::sendNextMissionWaypoint()
+{
+    const int n = m_missionWaypoints.size();
+    if (m_missionCurrentIndex < 0 || m_missionCurrentIndex >= n) return;
+    const QVariantMap wp = m_missionWaypoints.at(m_missionCurrentIndex).toMap();
+    const bool isContinuation = (m_missionCurrentIndex < n - 1);
+    m_missionExpectedReachId = m_commandDispatcher->sendWaypoint(
+        wp.value("x").toDouble(),
+        wp.value("y").toDouble(),
+        wp.value("z").toDouble(),
+        wp.value("yaw").toDouble(),
+        isContinuation);
+}
+
+void AppState::checkMissionProgress()
+{
+    if (m_missionState != QStringLiteral("RUNNING")) return;
+    const quint32 reached = m_telemetryStore->lastReachedWaypointId();
+    if (reached == m_lastSeenReachedId) return;   // 没变化
+    m_lastSeenReachedId = reached;
+    if (reached == 0 || reached != m_missionExpectedReachId) return;  // 不是当前航点
+
+    const int n = m_missionWaypoints.size();
+    if (m_missionCurrentIndex >= n - 1) {
+        // 末点到达 → 任务完成（飞机端自动悬停，因 waypoint_mission=false）
+        m_missionState = QStringLiteral("DONE");
+        m_missionCurrentIndex = -1;
+        m_missionExpectedReachId = 0;
+        emit missionStateChanged();
+        return;
+    }
+    m_missionCurrentIndex++;
+    sendNextMissionWaypoint();
+    emit missionStateChanged();
 }

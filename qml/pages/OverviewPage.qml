@@ -757,18 +757,44 @@ Item {
                             Text { text: "m"; color: "#8B949E"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
                         }
 
+                        // Mission status line
+                        Rectangle {
+                            width: parent.width; height: 22; radius: 4
+                            color: appState.missionState === "RUNNING" ? "#1A3A4F"
+                                  : appState.missionState === "DONE" ? "#1A4A2E"
+                                  : appState.missionState === "ABORTED" ? "#6E1A1A" : "#21262D"
+                            border.color: "#30363D"
+                            Text {
+                                anchors.centerIn: parent
+                                color: "#C9D1D9"; font.pixelSize: 10; font.family: "Consolas"
+                                text: {
+                                    if (appState.missionState === "RUNNING")
+                                        return "任务进行中  " + (appState.missionCurrentIndex + 1) + " / " + appState.missionTotal
+                                    if (appState.missionState === "DONE")
+                                        return "任务完成（末点悬停）"
+                                    if (appState.missionState === "ABORTED")
+                                        return "任务已中止"
+                                    return "待发送 " + waypointModel.count + " 个航点"
+                                }
+                            }
+                        }
+
                         // Mission controls
                         PrimaryButton {
-                            width: parent.width; height: 26; text: "上传航点"; fillColor: "#1F4E8C"
-                            onClicked: uploadWaypoints()
-                        }
-                        PrimaryButton {
-                            width: parent.width; height: 26; text: "开始任务"; fillColor: "#1A4A2E"
-                            onClicked: appState.issueCommand("开始任务")
+                            width: parent.width; height: 26
+                            text: appState.missionState === "RUNNING" ? "中止任务" : "上传航点"
+                            fillColor: appState.missionState === "RUNNING" ? "#6E1A1A" : "#1F4E8C"
+                            onClicked: {
+                                if (appState.missionState === "RUNNING") {
+                                    appState.abortMission()
+                                } else {
+                                    uploadWaypoints()
+                                }
+                            }
                         }
                         PrimaryButton {
                             width: parent.width; height: 26; text: "返航"; fillColor: "#6E1A1A"
-                            onClicked: appState.issueCommand("返航")
+                            onClicked: appState.issueCommand("Land")
                         }
                     }
                 }
@@ -1181,10 +1207,13 @@ Item {
     // ═══════════════════════════════════════
     function uploadWaypoints() {
         if (waypointModel.count === 0) return
+        var list = []
         for (var i = 0; i < waypointModel.count; ++i) {
             var wp = waypointModel.get(i)
-            appState.sendManualMove("XYZ_POS", wp.wx, wp.wy, wp.wz, wp.wyaw)
+            list.push({ wx: wp.wx, wy: wp.wy, wz: wp.wz })
         }
+        // yaw 由 AppState 按航迹方向计算（B 方案），无需在 QML 端处理
+        appState.startMission(list)
     }
 
     // ═══════════════════════════════════════
