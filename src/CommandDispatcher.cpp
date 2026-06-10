@@ -5,6 +5,7 @@
 #include "ZenithProtocol.h"
 
 #include <QMap>
+#include <cmath>
 
 CommandDispatcher::CommandDispatcher(TelemetryStore *telemetryStore, ZenithProtocolClient *protocolClient, QObject *parent)
     : QObject(parent),
@@ -89,7 +90,7 @@ void CommandDispatcher::sendManualMove(const QString &mode, double x, double y, 
     payload.insert("position_ref", QVariantList{x, y, z});
     payload.insert("velocity_ref", QVariantList{0.0, 0.0, 0.0});
     payload.insert("acceleration_ref", QVariantList{0.0, 0.0, 0.0});
-    payload.insert("yaw_ref", yawDeg);
+    payload.insert("yaw_ref", yawDeg * M_PI / 180.0);
     payload.insert("Yaw_Rate_Mode", false);
     payload.insert("yaw_rate_ref", 0.0);
     payload.insert("att_ref", QVariantList{0.0, 0.0, 0.0, 0.0});

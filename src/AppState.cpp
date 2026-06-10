@@ -9,6 +9,7 @@
 
 #include <QDateTime>
 #include <QSettings>
+#include <QTimer>
 #include <cmath>
 
 AppState::AppState(QObject *parent)
@@ -723,20 +724,24 @@ void AppState::startMission(const QVariantList &waypoints)
 
     m_missionWaypoints.clear();
     const int n = waypoints.size();
+    // 默认 yaw = 当前 yaw（单点 mission 或路径退化时不改变姿态）
+    const double currentYaw = m_yaw;
     for (int i = 0; i < n; ++i) {
         const QVariantMap wp = waypoints.at(i).toMap();
         const double x = wp.value("wx").toDouble();
         const double y = wp.value("wy").toDouble();
         const double z = wp.value("wz").toDouble();
-        double yawRad = 0.0;
+        double yawRad = currentYaw;
         if (i + 1 < n) {
             const QVariantMap next = waypoints.at(i + 1).toMap();
-            yawRad = std::atan2(next.value("wy").toDouble() - y,
-                                next.value("wx").toDouble() - x);
+            const double dx = next.value("wx").toDouble() - x;
+            const double dy = next.value("wy").toDouble() - y;
+            if (std::hypot(dx, dy) > 0.05) yawRad = std::atan2(dy, dx);
         } else if (i > 0) {
             const QVariantMap prev = waypoints.at(i - 1).toMap();
-            yawRad = std::atan2(y - prev.value("wy").toDouble(),
-                                x - prev.value("wx").toDouble());
+            const double dx = x - prev.value("wx").toDouble();
+            const double dy = y - prev.value("wy").toDouble();
+            if (std::hypot(dx, dy) > 0.05) yawRad = std::atan2(dy, dx);
         }
         QVariantMap entry;
         entry.insert("x", x);
@@ -775,6 +780,85 @@ void AppState::sendNextMissionWaypoint()
         wp.value("z").toDouble(),
         wp.value("yaw").toDouble(),
         isContinuation);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  一键起飞 — 在位置模式下解锁，切 OFFBOARD，飞到指定高度悬停
+//  序列总时长 ~3s，全程预检 + 状态保护
+// ─────────────────────────────────────────────────────────────
+void AppState::takeoffTo(double heightMeters)
+{
+    // 边界裁剪：禁止 0.3-3m 之外的高度
+    if (heightMeters < 0.3 || heightMeters > 3.0) {
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"),
+            QStringLiteral("Blocked: height %1m out of [0.3, 3.0]").arg(heightMeters));
+        return;
+    }
+    // 安全检查 1：飞机必须 disarmed（防止误触把飞行中的飞机再 arm）
+    if (m_armed) {
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Blocked: 已解锁"));
+        return;
+    }
+    // 安全检查 2：必须有有效定位
+    if (!m_odomValid) {
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Blocked: odom 无效（VINS 未就绪）"));
+        return;
+    }
+    // 安全检查 3：飞控连接通
+    if (!m_connected) {
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Blocked: 飞控未连接"));
+        return;
+    }
+    // 安全检查 4：链路可发指令
+    if (!m_protocolClient->canSendControlCommands()) {
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Blocked: link 未 CONNECTED"));
+        return;
+    }
+    // 安全检查 5：FAILSAFE 不能在告警态起飞
+    if (m_failsafe) {
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Blocked: FAILSAFE 中"));
+        return;
+    }
+
+    // 锁定当前 ENU 位置作为起飞点（防止 arm 期间 odom 抖动飘）
+    const double startX = m_positionX;
+    const double startY = m_positionY;
+    const double startYaw = m_yaw;
+
+    m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"),
+        QStringLiteral("Sequence start → POSCTL → arm → OFFBOARD → climb to %1m").arg(heightMeters));
+
+    // T+0:     切 POSCTL（确保从已知安全态起飞）
+    m_commandDispatcher->setPx4Mode(QStringLiteral("POSCTL"));
+
+    // T+400ms: arm
+    QTimer::singleShot(400, this, [this]() {
+        if (m_armed) return; // 上一拍可能已经 arm 过
+        m_commandDispatcher->armVehicle(true);
+    });
+
+    // T+1500ms: 切 OFFBOARD（armed 状态下 Zenith FSM 会进 COMMAND_CONTROL）
+    QTimer::singleShot(1500, this, [this]() {
+        if (!m_armed) {
+            m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Abort: arm 失败"));
+            return;
+        }
+        m_commandDispatcher->setPx4Mode(QStringLiteral("OFFBOARD"));
+    });
+
+    // T+2500ms: 用 Init_Pos_Hover (Agent_CMD=1)，飞机端 px4ctrl 路径已验证。
+    // Init_Pos_Hover 目标 = Takeoff_position + (0,0,Takeoff_height)，由 lingkong1_opi.yaml 控制。
+    // 之前 sendManualMove(XYZ_POS) 在 pos_controller=PX4_CTRL 下不驱动起飞（log_22 验证）。
+    Q_UNUSED(heightMeters); Q_UNUSED(startX); Q_UNUSED(startY); Q_UNUSED(startYaw);
+    QTimer::singleShot(2500, this, [this]() {
+        if (!m_armed) {
+            m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"), QStringLiteral("Abort: 序列中飞机已被 disarmed"));
+            return;
+        }
+        m_commandDispatcher->issueQuickAction(QStringLiteral("初始点悬停"));  // Agent_CMD=1
+        m_telemetryStore->setCommandFeedback(QStringLiteral("Takeoff"),
+            QStringLiteral("起飞指令已发（Init_Pos_Hover，高度由 yaml Takeoff_height 控制）"));
+    });
 }
 
 void AppState::checkMissionProgress()

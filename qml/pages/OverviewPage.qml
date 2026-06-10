@@ -1110,6 +1110,46 @@ Item {
 
                         Column {
                             visible: quickCmdSection.expanded; width: parent.width; spacing: 4
+
+                            // 起飞按钮：长按 1.2s 确认（防误触），未解锁+odom有效+连接通才高亮
+                            Rectangle {
+                                id: takeoffBtn
+                                width: parent.width; height: 32; radius: 5
+                                property bool ready: !appState.armed && appState.odomValid && appState.connected && !appState.failsafe
+                                property real holdProgress: 0.0
+                                color: ready ? (holdProgress > 0 ? "#B85A1A" : "#7A3F0E") : "#3A2A1A"
+                                border.color: ready ? "#E07A30" : "#5A3F30"; border.width: 1
+                                // 进度条
+                                Rectangle {
+                                    anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                    width: parent.width * takeoffBtn.holdProgress; radius: 5
+                                    color: "#E07A30"; opacity: 0.45
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: takeoffBtn.ready ? (takeoffBtn.holdProgress > 0 ? "起飞中… 松手取消" : "▲ 起飞到 1m（长按 1.2s）") : "起飞 — 不可用"
+                                    color: takeoffBtn.ready ? "#FFEED8" : "#6E5A48"; font.pixelSize: 11; font.bold: true
+                                }
+                                Timer {
+                                    id: takeoffTimer; interval: 50; repeat: true
+                                    onTriggered: {
+                                        takeoffBtn.holdProgress += 0.05 / 1.2
+                                        if (takeoffBtn.holdProgress >= 1.0) {
+                                            takeoffBtn.holdProgress = 0
+                                            stop()
+                                            appState.takeoffTo(1.0)
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: takeoffBtn.ready
+                                    onPressed: { takeoffBtn.holdProgress = 0.001; takeoffTimer.start() }
+                                    onReleased: { takeoffTimer.stop(); takeoffBtn.holdProgress = 0 }
+                                    onCanceled: { takeoffTimer.stop(); takeoffBtn.holdProgress = 0 }
+                                }
+                            }
+
                             PrimaryButton { width: parent.width; height: 26; text: "当前点悬停"; fillColor: "#1F4E8C"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
                             PrimaryButton { width: parent.width; height: 26; text: "初始点悬停"; fillColor: "#1A5C30"; enabled: appState.connected; onClicked: appState.issueCommand(text) }
                             PrimaryButton { width: parent.width; height: 26; text: "降落"; fillColor: "#6E1A1A"; enabled: appState.connected; onClicked: appState.issueCommand(text) }

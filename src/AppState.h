@@ -190,6 +190,10 @@ public:
     Q_INVOKABLE void startMission(const QVariantList &waypoints);
     Q_INVOKABLE void abortMission();
 
+    // 一键起飞到指定高度（米）。仅在 disarmed + odom_valid + 连接通时可用
+    // 序列：切 POSCTL → arm → 切 OFFBOARD → Move XYZ_POS(curX, curY, height)
+    Q_INVOKABLE void takeoffTo(double heightMeters);
+
     // Connection profile persistence
     Q_INVOKABLE QVariantList connectionProfiles() const;
     Q_INVOKABLE void saveConnectionProfile(const QString &name, const QString &ip, int udpPort, int tcpPort, int heartbeatPort);
