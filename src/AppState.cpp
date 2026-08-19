@@ -29,6 +29,10 @@ AppState::AppState(QObject *parent)
         syncFromStore();
         emit pathChanged();
     });
+    connect(m_telemetryStore, &TelemetryStore::gridMapChanged, this, [this]() {
+        ++m_gridMapVersion;
+        emit gridMapChanged();
+    });
     connect(m_protocolClient, &ZenithProtocolClient::linkStatesChanged, this, [this]() {
         m_telemetryStore->setTransportHealth(
             m_protocolClient->telemetryFresh(),
@@ -49,6 +53,9 @@ AppState::AppState(QObject *parent)
         emit linkSettingsChanged();
     });
     connect(m_protocolClient, &ZenithProtocolClient::decodedMessage, this, [this](int msgId, int robotId, const QVariantMap &payload) {
+        // 只要收到任一 CRC 通过的帧就算"已对频" —— 这是最快的链路反馈，
+        // 不依赖任何业务数据，上电几秒内即可点亮。
+        m_telemetryStore->noteFrameReceived();
         switch (msgId) {
         case ZenithProtocol::UAVSTATE:
             m_telemetryStore->applyUavState(payload, robotId);
@@ -70,6 +77,16 @@ AppState::AppState(QObject *parent)
             break;
         case ZenithProtocol::PARAMSETTINGS:
             m_paramStore->applyParamSettings(payload);
+            break;
+        case ZenithProtocol::CUSTOMDATASEGMENT_1:
+            // 机载 preflight_reporter 用它上报 PX4 SYS_STATUS 传感器健康位
+            m_telemetryStore->applyCustomDataSegment(payload);
+            break;
+        case ZenithProtocol::GRIDMAP:
+            m_telemetryStore->applyGridMap(payload);
+            break;
+        case ZenithProtocol::PLANNEDPATH:
+            m_telemetryStore->applyPlannedPath(payload);
             break;
         default:
             break;
@@ -141,6 +158,20 @@ double AppState::vinsPositionX() const { return m_vinsPositionX; }
 double AppState::vinsPositionY() const { return m_vinsPositionY; }
 double AppState::vinsPositionZ() const { return m_vinsPositionZ; }
 bool AppState::odomValid() const { return m_odomValid; }
+bool AppState::preflightValid() const { return m_preflightValid; }
+bool AppState::preflightArmOk() const { return m_preflightArmOk; }
+QString AppState::preflightFail() const { return m_preflightFail; }
+QVariantList AppState::preflightChecks() const { return m_preflightChecks; }
+bool AppState::preflightPrearmBit() const { return m_preflightPrearmBit; }
+int AppState::preflightArmAck() const { return m_preflightArmAck; }
+QString AppState::preflightArmAckText() const { return m_preflightArmAckText; }
+QString AppState::missionLogText() const { return m_missionLogText; }
+bool AppState::linkEstablished() const { return m_linkEstablished; }
+bool AppState::batteryValid() const { return m_batteryValid; }
+bool AppState::allReady() const { return m_allReady; }
+int  AppState::aircraftUptime() const { return m_aircraftUptime; }
+QVariantList AppState::readinessSteps() const { return m_readinessSteps; }
+void AppState::clearMissionLog() { m_telemetryStore->clearMissionLog(); }
 double AppState::velocityX() const { return m_velocityX; }
 double AppState::velocityY() const { return m_velocityY; }
 double AppState::velocityZ() const { return m_velocityZ; }
@@ -431,6 +462,20 @@ void AppState::syncFromStore()
     m_vinsPositionY = m_telemetryStore->vinsPositionY();
     m_vinsPositionZ = m_telemetryStore->vinsPositionZ();
     m_odomValid = m_telemetryStore->odomValid();
+    m_preflightValid = m_telemetryStore->preflightValid();
+    m_preflightArmOk = m_telemetryStore->preflightArmOk();
+    m_preflightFail = m_telemetryStore->preflightFail();
+    m_preflightChecks = m_telemetryStore->preflightChecks();
+    m_preflightPrearmBit = m_telemetryStore->preflightPrearmBit();
+    m_preflightArmAck = m_telemetryStore->preflightArmAck();
+    m_preflightArmAckText = m_telemetryStore->preflightArmAckText();
+    m_missionLogText = m_telemetryStore->missionLogText();
+    m_linkEstablished = m_telemetryStore->linkEstablished();
+    m_batteryValid = m_telemetryStore->batteryValid();
+    m_aircraftUptime = m_telemetryStore->aircraftUptime();
+    m_readinessSteps = m_telemetryStore->readinessSteps();
+    m_allReady = m_telemetryStore->fcuReady() && m_telemetryStore->batteryValid()
+              && m_telemetryStore->locReady() && m_telemetryStore->ctrlReady();
     m_velocityX = m_telemetryStore->velocityX();
     m_velocityY = m_telemetryStore->velocityY();
     m_velocityZ = m_telemetryStore->velocityZ();
@@ -882,3 +927,9 @@ void AppState::checkMissionProgress()
     sendNextMissionWaypoint();
     emit missionStateChanged();
 }
+
+double AppState::gridMapOriginX() const { return m_telemetryStore->gridMapOriginX(); }
+double AppState::gridMapOriginY() const { return m_telemetryStore->gridMapOriginY(); }
+double AppState::gridMapResolution() const { return m_telemetryStore->gridMapResolution(); }
+int AppState::gridMapWidth() const { return m_telemetryStore->gridMapWidth(); }
+int AppState::gridMapHeight() const { return m_telemetryStore->gridMapHeight(); }

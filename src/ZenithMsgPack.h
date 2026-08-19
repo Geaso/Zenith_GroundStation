@@ -52,6 +52,17 @@ inline QString keyName(uint8_t key) {
     case 50: return QStringLiteral("MessageType");
     case 51: return QStringLiteral("Message");
     case 52: return QStringLiteral("sec");
+    // GridMap (msg_id=11)
+    case 60: return QStringLiteral("gm_origin_x");
+    case 61: return QStringLiteral("gm_origin_y");
+    case 62: return QStringLiteral("gm_resolution");
+    case 63: return QStringLiteral("gm_width");
+    case 64: return QStringLiteral("gm_height");
+    case 65: return QStringLiteral("gm_slice_z");
+    case 66: return QStringLiteral("gm_data");
+    // PlannedPath (msg_id=12)
+    case 70: return QStringLiteral("pp_num_points");
+    case 71: return QStringLiteral("pp_data");
     default: return QString("_key_%1").arg(key);
     }
 }
@@ -130,6 +141,13 @@ private:
         if (b == 0xC2) return QVariant(false);
         if (b == 0xC3) return QVariant(true);
 
+        // bin8
+        if (b == 0xC4) { uint8_t len = readByte(); return readBin(len); }
+        // bin16
+        if (b == 0xC5) { uint16_t len = readUint16BE(); return readBin(len); }
+        // bin32
+        if (b == 0xC6) { uint32_t len = readUint32BE(); return readBin(static_cast<int>(len)); }
+
         // uint8
         if (b == 0xCC) return QVariant(static_cast<int>(readByte()));
         // uint16
@@ -199,6 +217,13 @@ private:
         QString s = QString::fromUtf8(m_data.data() + m_pos, len);
         m_pos += len;
         return QVariant(s);
+    }
+
+    QVariant readBin(int len) {
+        if (m_pos + len > m_data.size()) len = m_data.size() - m_pos;
+        QByteArray ba(m_data.data() + m_pos, len);
+        m_pos += len;
+        return QVariant(ba);
     }
 };
 

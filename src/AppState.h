@@ -45,6 +45,21 @@ class AppState : public QObject
     Q_PROPERTY(double vinsPositionY READ vinsPositionY NOTIFY telemetryChanged)
     Q_PROPERTY(double vinsPositionZ READ vinsPositionZ NOTIFY telemetryChanged)
     Q_PROPERTY(bool odomValid READ odomValid NOTIFY telemetryChanged)
+    // 解锁前检查
+    Q_PROPERTY(bool preflightValid READ preflightValid NOTIFY telemetryChanged)
+    Q_PROPERTY(bool preflightArmOk READ preflightArmOk NOTIFY telemetryChanged)
+    Q_PROPERTY(QString preflightFail READ preflightFail NOTIFY telemetryChanged)
+    Q_PROPERTY(QVariantList preflightChecks READ preflightChecks NOTIFY telemetryChanged)
+    Q_PROPERTY(bool preflightPrearmBit READ preflightPrearmBit NOTIFY telemetryChanged)
+    Q_PROPERTY(int preflightArmAck READ preflightArmAck NOTIFY telemetryChanged)
+    Q_PROPERTY(QString preflightArmAckText READ preflightArmAckText NOTIFY telemetryChanged)
+    Q_PROPERTY(QString missionLogText READ missionLogText NOTIFY telemetryChanged)
+    // 链路/就绪状态
+    Q_PROPERTY(bool linkEstablished READ linkEstablished NOTIFY telemetryChanged)
+    Q_PROPERTY(bool batteryValid READ batteryValid NOTIFY telemetryChanged)
+    Q_PROPERTY(bool allReady READ allReady NOTIFY telemetryChanged)
+    Q_PROPERTY(int aircraftUptime READ aircraftUptime NOTIFY telemetryChanged)
+    Q_PROPERTY(QVariantList readinessSteps READ readinessSteps NOTIFY telemetryChanged)
     Q_PROPERTY(double velocityX READ velocityX NOTIFY telemetryChanged)
     Q_PROPERTY(double velocityY READ velocityY NOTIFY telemetryChanged)
     Q_PROPERTY(double velocityZ READ velocityZ NOTIFY telemetryChanged)
@@ -87,9 +102,17 @@ class AppState : public QObject
     Q_PROPERTY(QString missionState READ missionState NOTIFY missionStateChanged)
     Q_PROPERTY(int missionCurrentIndex READ missionCurrentIndex NOTIFY missionStateChanged)
     Q_PROPERTY(int missionTotal READ missionTotal NOTIFY missionStateChanged)
+    Q_PROPERTY(int gridMapVersion READ gridMapVersion NOTIFY gridMapChanged)
+    Q_PROPERTY(double gridMapOriginX READ gridMapOriginX NOTIFY gridMapChanged)
+    Q_PROPERTY(double gridMapOriginY READ gridMapOriginY NOTIFY gridMapChanged)
+    Q_PROPERTY(double gridMapResolution READ gridMapResolution NOTIFY gridMapChanged)
+    Q_PROPERTY(int gridMapWidth READ gridMapWidth NOTIFY gridMapChanged)
+    Q_PROPERTY(int gridMapHeight READ gridMapHeight NOTIFY gridMapChanged)
 public:
     explicit AppState(QObject *parent = nullptr);
     ~AppState() override;
+
+    TelemetryStore* telemetryStore() const { return m_telemetryStore; }
 
     QString vehicleName() const;
     QString flightStatus() const;
@@ -122,6 +145,20 @@ public:
     double vinsPositionY() const;
     double vinsPositionZ() const;
     bool odomValid() const;
+    bool preflightValid() const;
+    bool preflightArmOk() const;
+    QString preflightFail() const;
+    QVariantList preflightChecks() const;
+    bool preflightPrearmBit() const;
+    int preflightArmAck() const;
+    QString preflightArmAckText() const;
+    QString missionLogText() const;
+    bool linkEstablished() const;
+    bool batteryValid() const;
+    bool allReady() const;
+    int  aircraftUptime() const;
+    QVariantList readinessSteps() const;
+    Q_INVOKABLE void clearMissionLog();
     double velocityX() const;
     double velocityY() const;
     double velocityZ() const;
@@ -186,6 +223,13 @@ public:
     int missionCurrentIndex() const;
     int missionTotal() const;
 
+    int gridMapVersion() const { return m_gridMapVersion; }
+    double gridMapOriginX() const;
+    double gridMapOriginY() const;
+    double gridMapResolution() const;
+    int gridMapWidth() const;
+    int gridMapHeight() const;
+
     // 航线任务（waypoint mission）：地面站按 callback 顺序下发，超时由飞机端 FAILSAFE LAND
     Q_INVOKABLE void startMission(const QVariantList &waypoints);
     Q_INVOKABLE void abortMission();
@@ -215,6 +259,7 @@ signals:
     void recordingChanged();
     void profilesChanged();
     void missionStateChanged();
+    void gridMapChanged();
 
 private:
     QVariantList toVariantList(const QList<QPointF> &points) const;
@@ -222,6 +267,8 @@ private:
     void bootstrapDemoTelemetry();
     void sendNextMissionWaypoint();
     void checkMissionProgress();
+
+    int m_gridMapVersion = 0;
 
     QString m_vehicleName;
     QString m_flightStatus;
@@ -270,6 +317,19 @@ private:
     double m_vinsPositionY = 0.0;
     double m_vinsPositionZ = 0.0;
     bool m_odomValid = false;
+    bool m_preflightValid = false;
+    bool m_preflightArmOk = false;
+    QString m_preflightFail;
+    QVariantList m_preflightChecks;
+    bool m_preflightPrearmBit = false;
+    int m_preflightArmAck = -1;
+    QString m_preflightArmAckText;
+    QString m_missionLogText;
+    bool m_linkEstablished = false;
+    bool m_batteryValid = false;
+    bool m_allReady = false;
+    int  m_aircraftUptime = 0;
+    QVariantList m_readinessSteps;
     double m_velocityX;
     double m_velocityY;
     double m_velocityZ;

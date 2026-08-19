@@ -137,7 +137,13 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
 
     m_currentTime = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
     m_connected = payload.value("connected", true).toBool();
+    bool wasArmed = m_armed;
     m_armed = payload.value("armed", false).toBool();
+    if (m_armed && !wasArmed) {
+        m_trail3D.clear();
+        m_pathPoints.clear();
+        emit pathChanged();
+    }
     m_flightMode = payload.value("mode", "UNKNOWN").toString();
     m_locationSourceId = payload.value("location_source").toInt();
     m_gpsFixType = payload.value("gps_status").toInt();
@@ -211,6 +217,16 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
         emit pathChanged();
     }
 
+    TrailPt tp{static_cast<float>(posX), static_cast<float>(posY), static_cast<float>(posZ)};
+    if (m_trail3D.isEmpty() ||
+        qAbs(tp.x - m_trail3D.last().x) > 0.02f ||
+        qAbs(tp.y - m_trail3D.last().y) > 0.02f ||
+        qAbs(tp.z - m_trail3D.last().z) > 0.02f) {
+        m_trail3D.append(tp);
+        if (m_trail3D.size() > kMaxTrail)
+            m_trail3D.removeFirst();
+    }
+
     emit telemetryChanged();
 }
 
@@ -251,6 +267,60 @@ void TelemetryStore::applyTextInfo(const QVariantMap &payload)
     default:
         break;
     }
+
+    // 追加到任务日志滚动缓冲（机载 mission_log_forwarder 把 /rosout 转成 TextInfo 送上来）
+    if (!message.isEmpty()) {
+        const QString line = QStringLiteral("[%1] %2 %3")
+                                 .arg(QTime::currentTime().toString(QStringLiteral("HH:mm:ss")),
+                                      m_alertLevel.leftJustified(5, QLatin1Char(' ')),
+                                      message);
+        m_missionLog.prepend(line);
+        while (m_missionLog.size() > MissionLogMax)
+            m_missionLog.removeLast();
+    }
+
+    emit telemetryChanged();
+}
+
+void TelemetryStore::noteFrameReceived()
+{
+    if (!m_linkEstablished) {
+        m_linkEstablished = true;
+        emit telemetryChanged();
+    }
+}
+
+bool TelemetryStore::linkEstablished() const { return m_linkEstablished; }
+bool TelemetryStore::fcuReady()  const { return m_readyMask & 0x1; }
+bool TelemetryStore::batteryValid() const { return m_readyMask & 0x2; }
+bool TelemetryStore::locReady()  const { return m_readyMask & 0x4; }
+bool TelemetryStore::ctrlReady() const { return m_readyMask & 0x8; }
+int  TelemetryStore::aircraftUptime() const { return m_aircraftUptime; }
+
+QVariantList TelemetryStore::readinessSteps() const
+{
+    // 与机载 preflight_reporter 的 rd_mask 位序、rd_times 顺序一一对应
+    static const char *names[4] = {"飞控连接", "电池数据", "定位就绪", "控制状态机"};
+    const QStringList times = m_readyTimes.split(QLatin1Char(','));
+    QVariantList list;
+    for (int i = 0; i < 4; ++i) {
+        QVariantMap m;
+        m.insert("name", QString::fromUtf8(names[i]));
+        m.insert("ready", bool(m_readyMask & (1 << i)));
+        m.insert("atSec", i < times.size() ? times.at(i).toDouble() : 0.0);
+        list.append(m);
+    }
+    return list;
+}
+
+QString TelemetryStore::missionLogText() const
+{
+    return m_missionLog.join(QLatin1Char('\n'));
+}
+
+void TelemetryStore::clearMissionLog()
+{
+    m_missionLog.clear();
     emit telemetryChanged();
 }
 
@@ -375,10 +445,138 @@ void TelemetryStore::setDesiredReference(double posX, double posY, double posZ, 
 
 QString TelemetryStore::locationSourceName(int locationSource) const
 {
+    // 必须与机载 zenith_msgs/UAVState.msg 的枚举严格一致，索引即枚举值。
+    // 旧表只有 7 项且起点错位，导致 ODIN(12) 落到范围外显示 UNKNOWN。
     static const QStringList names = {
-        "GPS", "RTK", "VINS", "MID360", "ODIN", "ORBSLAM3", "OAKVIO"
+        "MOCAP",        // 0
+        "T265",         // 1
+        "GAZEBO",       // 2
+        "FAKE_ODOM",    // 3
+        "GPS",          // 4
+        "RTK",          // 5
+        "UWB",          // 6
+        "VINS",         // 7
+        "OPTICAL_FLOW", // 8
+        "VIOBOT",       // 9
+        "MID360",       // 10
+        "BSA_SLAM",     // 11
+        "ODIN",         // 12
+        "ProSim",       // 13
+        "OPENVINS",     // 14
+        "ORBSLAM3",     // 15
+        "OAKVIO"        // 16
     };
     return names.value(locationSource, "UNKNOWN");
+}
+
+// ---------------- 解锁前检查（PX4 SYS_STATUS 传感器健康位）----------------
+
+namespace {
+// MAV_SYS_STATUS_SENSOR 位定义，与机载 preflight_reporter.py 保持一致
+struct SensorBit { quint32 bit; const char *name; };
+const SensorBit kSensorBits[] = {
+    {0x00000001, "陀螺仪"},        {0x00000002, "加速度计"},
+    {0x00000004, "磁力计"},        {0x00000008, "气压计"},
+    {0x00000010, "空速计"},        {0x00000020, "GPS"},
+    {0x00000040, "光流"},          {0x00000080, "视觉定位"},
+    {0x00000100, "激光定位"},      {0x00000200, "外部真值"},
+    {0x00000400, "角速率控制"},    {0x00000800, "姿态增稳"},
+    {0x00001000, "偏航控制"},      {0x00002000, "高度控制"},
+    {0x00004000, "水平位置控制"},  {0x00008000, "电机输出"},
+    {0x00010000, "遥控接收机"},    {0x00020000, "陀螺仪2"},
+    {0x00040000, "加速度计2"},     {0x00080000, "磁力计2"},
+    {0x00100000, "地理围栏"},      {0x00200000, "AHRS 姿态参考"},
+    {0x00400000, "地形"},          {0x00800000, "反转电机"},
+    {0x01000000, "日志"},          {0x02000000, "电池"},
+    {0x04000000, "近距感知"},      {0x08000000, "卫通"},
+    {0x10000000, "解锁前检查"},    {0x20000000, "避障"},
+    {0x40000000, "动力系统"},
+};
+} // namespace
+
+bool TelemetryStore::preflightValid() const { return m_preflightValid; }
+bool TelemetryStore::preflightArmOk() const { return m_preflightArmOk; }
+QString TelemetryStore::preflightFail() const { return m_preflightFail; }
+bool TelemetryStore::preflightPrearmBit() const { return m_preflightPrearmBit; }
+int TelemetryStore::preflightArmAck() const { return m_preflightArmAck; }
+QString TelemetryStore::preflightArmAckText() const { return m_preflightArmAckText; }
+
+QVariantList TelemetryStore::preflightChecks() const
+{
+    QVariantList list;
+    if (!m_preflightValid)
+        return list;
+    for (const SensorBit &s : kSensorBits) {
+        if (!(m_preflightPresent & s.bit))
+            continue; // 该机型没有这个子系统，不显示
+        QVariantMap item;
+        item.insert("name", QString::fromUtf8(s.name));
+        item.insert("enabled", bool(m_preflightEnabled & s.bit));
+        item.insert("healthy", bool(m_preflightHealth & s.bit));
+        list.append(item);
+    }
+    return list;
+}
+
+void TelemetryStore::applyCustomDataSegment(const QVariantMap &payload)
+{
+    // 线格式是扁平化带索引的：datas_num / name[i] / type[i] / value[i]
+    const int count = payload.value(QStringLiteral("datas_num")).toInt();
+    if (count <= 0)
+        return;
+
+    bool touched = false;
+    for (int i = 0; i < count; ++i) {
+        const QString key = payload.value(QStringLiteral("name[%1]").arg(i)).toString();
+        if (!key.startsWith(QLatin1String("pf_")))
+            continue;
+        const QString value = payload.value(QStringLiteral("value[%1]").arg(i)).toString();
+
+        if (key == QLatin1String("pf_present")) {
+            m_preflightPresent = static_cast<quint32>(value.toLongLong());
+            touched = true;
+        } else if (key == QLatin1String("pf_enabled")) {
+            m_preflightEnabled = static_cast<quint32>(value.toLongLong());
+            touched = true;
+        } else if (key == QLatin1String("pf_health")) {
+            m_preflightHealth = static_cast<quint32>(value.toLongLong());
+            touched = true;
+        } else if (key == QLatin1String("pf_arm_ok")) {
+            // 注意：机载 customDataSegmentCb 里 ROS 的 bool 字段是 uint8_t，
+            // setValue() 重载会选中 int 版本，所以线上实际是 type=INTEGER、值 "1"/"0"，
+            // 而不是 BOOLEAN 的 "true"/"false"。两种都要认。
+            m_preflightArmOk = (value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
+                            || (value.toInt() != 0);
+            touched = true;
+        } else if (key == QLatin1String("pf_fail")) {
+            m_preflightFail = value;
+            touched = true;
+        } else if (key == QLatin1String("rd_mask")) {
+            m_readyMask = value.toInt();
+            touched = true;
+        } else if (key == QLatin1String("rd_times")) {
+            m_readyTimes = value;
+            touched = true;
+        } else if (key == QLatin1String("rd_up")) {
+            m_aircraftUptime = value.toInt();
+            touched = true;
+        } else if (key == QLatin1String("pf_prearm_bit")) {
+            m_preflightPrearmBit = (value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
+                                || (value.toInt() != 0);
+            touched = true;
+        } else if (key == QLatin1String("pf_arm_ack")) {
+            m_preflightArmAck = value.toInt();
+            touched = true;
+        } else if (key == QLatin1String("pf_arm_ack_txt")) {
+            m_preflightArmAckText = value;
+            touched = true;
+        }
+    }
+
+    if (touched) {
+        m_preflightValid = true;
+        emit telemetryChanged();
+    }
 }
 
 QString TelemetryStore::gpsStatusName(int gpsStatus) const
@@ -389,4 +587,48 @@ QString TelemetryStore::gpsStatusName(int gpsStatus) const
         "GPS_FIX_TYPE_RTK_FIXEDR", "GPS_FIX_TYPE_STATIC", "GPS_FIX_TYPE_PPP"
     };
     return names.value(gpsStatus, "GPS_UNKNOWN");
+}
+
+void TelemetryStore::applyGridMap(const QVariantMap &payload)
+{
+    m_gmOriginX = payload.value("gm_origin_x").toFloat();
+    m_gmOriginY = payload.value("gm_origin_y").toFloat();
+    m_gmResolution = payload.value("gm_resolution").toFloat();
+    m_gmWidth = payload.value("gm_width").toInt();
+    m_gmHeight = payload.value("gm_height").toInt();
+    m_gmSliceZ = payload.value("gm_slice_z").toFloat();
+
+    QByteArray rle = payload.value("gm_data").toByteArray();
+    const int total = m_gmWidth * m_gmHeight;
+    m_gmCells.resize(total);
+    m_gmCells.fill(0);
+
+    int cell_idx = 0;
+    for (int i = 0; i + 1 < rle.size() && cell_idx < total; i += 2) {
+        uint8_t val = static_cast<uint8_t>(rle[i]);
+        uint8_t run = static_cast<uint8_t>(rle[i + 1]);
+        for (int r = 0; r < run && cell_idx < total; ++r)
+            m_gmCells[cell_idx++] = val;
+    }
+
+    emit gridMapChanged();
+}
+
+void TelemetryStore::applyPlannedPath(const QVariantMap &payload)
+{
+    int npts = payload.value("pp_num_points").toInt();
+    QByteArray raw = payload.value("pp_data").toByteArray();
+
+    m_plannedPath.clear();
+    if (npts <= 0 || raw.size() < npts * 12) {
+        emit plannedPathChanged();
+        return;
+    }
+
+    m_plannedPath.reserve(npts);
+    const float *fp = reinterpret_cast<const float*>(raw.constData());
+    for (int i = 0; i < npts; ++i) {
+        m_plannedPath.append({fp[i*3], fp[i*3+1], fp[i*3+2]});
+    }
+    emit plannedPathChanged();
 }

@@ -1,4 +1,7 @@
 #include "ZenithProtocolClient.h"
+#include <QTextStream>
+#include <QFile>
+#include <QDebug>
 
 #include "ZenithProtocol.h"
 #include "ZenithMsgPack.h"
@@ -489,9 +492,8 @@ ZenithProtocolClient::DecodedFrame ZenithProtocolClient::tryDecodeFrame(const QB
         | (static_cast<quint32>(static_cast<quint8>(buffer[4])) << 16)
         | (static_cast<quint32>(static_cast<quint8>(buffer[5])) << 24);
 
-    // Sanity check: Zenith frames should never exceed 4KB.
-    // A corrupted magic match with huge payload size would stall the parser forever.
-    if (payloadSize > 4096) {
+    // Sanity check: Zenith frames should never exceed 8KB (grid map frames can be ~4KB).
+    if (payloadSize > 8192) {
         result.totalBytes = 2; // skip past false magic bytes
         return result;
     }

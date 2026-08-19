@@ -128,22 +128,24 @@ void CommandDispatcher::sendManualMove(const QString &mode, double x, double y, 
 
 void CommandDispatcher::runScript(const QString &name, const QString &command, const QString &target)
 {
+    // 历史 bug: 这里以前发 CUSTOMDATASEGMENT_1, 但飞机端没有节点订阅并执行 system().
+    // 实际上需要走 MODESELECTION/CUSTOMMODE 路径, 那条路 Bridge 收到后会调用
+    // UAVBasic::loadCmdPub() → system(cmd + " &") 真正执行, 同时回传 CMD_ACK 日志.
+    Q_UNUSED(target);
     if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, QString("StartScript: %1").arg(name))) {
         return;
     }
 
     QVariantMap payload;
-    payload.insert("cmd", command);
-    payload.insert("mode", 1);
-    payload.insert("node_name", "");
-    payload.insert("detection_cmd", "");
-    payload.insert("flag", 1);
-    payload.insert("cmd_level", 2);
-    payload.insert("close_cmd", "");
-    payload.insert("target", target);
+    payload.insert("mode", ZenithProtocol::CUSTOMMODE_MODE);
+    payload.insert("selectId", QVariantList{m_telemetryStore->currentVehicleId()});
+    payload.insert("use_mode", ZenithProtocol::UM_CREATE);
+    payload.insert("is_simulation", false);
+    payload.insert("swarm_num", 1);
+    payload.insert("cmd", command);  // 直接给原始 shell cmd, Bridge 不加 prefix 就当 "其他命令"
 
-    m_protocolClient->sendTcpMessage(ZenithProtocol::CUSTOMDATASEGMENT_1, payload, m_telemetryStore->currentVehicleId());
-    m_telemetryStore->setCommandFeedback(QString("StartScript: %1").arg(name), "StartScript payload queued");
+    m_protocolClient->sendTcpMessage(ZenithProtocol::MODESELECTION, payload, m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback(QString("StartScript: %1").arg(name), "Sent (awaiting CMD_ACK)");
 }
 
 void CommandDispatcher::armVehicle(bool arm)
