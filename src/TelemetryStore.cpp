@@ -326,7 +326,9 @@ void TelemetryStore::clearMissionLog()
 
 void TelemetryStore::applyUavControlState(const QVariantMap &payload)
 {
-    static const QStringList controlStates = {"INIT", "MANUAL", "HOVER", "COMMAND", "LAND"};
+    // Must match zenith_msgs/UAVControlState.msg exactly.  The old five-item
+    // table was inherited from a different wire enum and shifted COMMAND/LAND.
+    static const QStringList controlStates = {"INIT", "RC_POS", "COMMAND", "LAND"};
     static const QStringList controllers = {"PX4_ORIGIN", "PID", "UDE", "NE"};
     static const QStringList execStates = {
         "DISARMED", "STANDBY", "RC_CONTROL", "AUTO_HOLD",
