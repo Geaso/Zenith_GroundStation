@@ -1,7 +1,9 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQuick3D
+import Zenith3D 1.0
 import QtQuick.Layouts 1.15
-import "../components"
+import ZenithUI 1.0
 
 Item {
     id: root
@@ -76,6 +78,7 @@ Item {
                 Repeater {
                     model: [
                         { label: "地图", view: 0 },
+                        { label: "栅格", view: 3 },
                         { label: "视频", view: 1 },
                         { label: "数据", view: 2 }
                     ]
@@ -110,6 +113,61 @@ Item {
                     MapBtn { text: "UAV"; onClicked: { mapCenterX = appState.positionX; mapCenterY = appState.positionY; mapCanvas.requestPaint() } }
                     MapBtn { text: "原点"; onClicked: { mapCenterX = 0; mapCenterY = 0; mapCanvas.requestPaint() } }
                     MapBtn { text: waypointPanelVisible ? "隐藏航点" : "航点"; onClicked: waypointPanelVisible = !waypointPanelVisible }
+                }
+
+                // ── 摄像头录像控件 (前/下 各 Start/Stop), 工具栏下方 ──
+                Column {
+                    anchors.top: parent.top; anchors.right: parent.right
+                    anchors.topMargin: 74; anchors.rightMargin: 8
+                    spacing: 4; z: 15
+
+                    // 前摄
+                    Row {
+                        spacing: 4
+                        Rectangle {
+                            width: 70; height: 22; radius: 4
+                            color: "#1F2937CC"; border.color: "#30363D80"
+                            Text { anchors.centerIn: parent; text: "前摄录像"; color: "#9CA3AF"; font.pixelSize: 9 }
+                        }
+                        MapBtn {
+                            text: "● Rec"
+                            onClicked: appState.runScriptAction(
+                                "Front Cam Record Start",
+                                "bash ~/Zenith_ws/src/zenith_apriltag/scripts/cam_record_toggle.sh front start",
+                                "Send To Current UAV")
+                        }
+                        MapBtn {
+                            text: "■ Stop"
+                            onClicked: appState.runScriptAction(
+                                "Front Cam Record Stop",
+                                "bash ~/Zenith_ws/src/zenith_apriltag/scripts/cam_record_toggle.sh front stop",
+                                "Send To Current UAV")
+                        }
+                    }
+
+                    // 下摄
+                    Row {
+                        spacing: 4
+                        Rectangle {
+                            width: 70; height: 22; radius: 4
+                            color: "#1F2937CC"; border.color: "#30363D80"
+                            Text { anchors.centerIn: parent; text: "下摄录像"; color: "#9CA3AF"; font.pixelSize: 9 }
+                        }
+                        MapBtn {
+                            text: "● Rec"
+                            onClicked: appState.runScriptAction(
+                                "Down Cam Record Start",
+                                "bash ~/Zenith_ws/src/zenith_apriltag/scripts/cam_record_toggle.sh down start",
+                                "Send To Current UAV")
+                        }
+                        MapBtn {
+                            text: "■ Stop"
+                            onClicked: appState.runScriptAction(
+                                "Down Cam Record Stop",
+                                "bash ~/Zenith_ws/src/zenith_apriltag/scripts/cam_record_toggle.sh down stop",
+                                "Send To Current UAV")
+                        }
+                    }
                 }
 
                 // ── Floating HUD overlay (top-left) ──
@@ -855,6 +913,13 @@ Item {
                             + "[ " + (appState.flightMode || "UNKNOWN") + " ]\n"
                             + "Location     : [ " + (appState.locationSource || "?") + " ]\n"
                             + "Odom Status  : [ " + (appState.odomValid ? "Valid" : "Invalid") + " ]\n"
+                            + "Arm Check    : [ " + (!appState.preflightValid ? "无数据"
+                                : !appState.preflightArmOk ? "不可解锁"
+                                : (appState.preflightPrearmBit ? "可解锁" : "传感器自检通过")) + " ]"
+                            + ((appState.preflightValid && !appState.preflightArmOk && appState.preflightFail)
+                                ? "  故障: " + appState.preflightFail : "")
+                            + (appState.preflightArmAck > 0
+                                ? "  上次解锁被拒: " + appState.preflightArmAckText : "") + "\n"
                             + "VINS_pos [m] : X=" + f(appState.vinsPositionX) + "  Y=" + f(appState.vinsPositionY) + "  Z=" + f(appState.vinsPositionZ) + "\n"
                             + "UAV_pos [m]  : X=" + f(appState.positionX) + "  Y=" + f(appState.positionY) + "  Z=" + f(appState.positionZ) + "\n"
                             + "UAV_vel [m/s]: X=" + f(appState.velocityX) + "  Y=" + f(appState.velocityY) + "  Z=" + f(appState.velocityZ) + "\n"
@@ -886,6 +951,56 @@ Item {
                                 width: parent.width
                                 text: appState.commandAck.length > 0 ? appState.commandAck : "Zenith Link Ready"
                                 color: "#58A6FF"; font.pixelSize: 12; wrapMode: Text.WordWrap
+                            }
+                        }
+                    }
+
+                    // ── 任务实时日志（机载 /rosout 经数传转发）──
+                    Rectangle {
+                        width: parent.width; height: 220
+                        radius: 8; color: "#161B22"; border.color: "#30363D"
+
+                        Column {
+                            anchors.fill: parent; anchors.margins: 10; spacing: 6
+
+                            Row {
+                                width: parent.width; spacing: 8
+                                Text {
+                                    text: "任务实时日志"; color: "#8B949E"
+                                    font.pixelSize: 11; font.bold: true
+                                    anchors.verticalCenter: parent.verticalCenter
+                                }
+                                Item { width: parent.width - 150; height: 1 }
+                                Rectangle {
+                                    width: 44; height: 18; radius: 4
+                                    color: "#21262D"; border.color: "#30363D"; border.width: 1
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    Text { anchors.centerIn: parent; text: "清空"; color: "#8B949E"; font.pixelSize: 9 }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: appState.clearMissionLog()
+                                    }
+                                }
+                            }
+                            Rectangle { width: parent.width; height: 1; color: "#262C36" }
+
+                            ScrollView {
+                                width: parent.width
+                                height: parent.height - 32
+                                clip: true
+                                TextArea {
+                                    readOnly: true
+                                    selectByMouse: true
+                                    wrapMode: TextArea.NoWrap
+                                    font.family: "Consolas"
+                                    font.pixelSize: 10
+                                    color: "#C9D1D9"
+                                    background: null
+                                    text: appState.missionLogText.length > 0
+                                          ? appState.missionLogText
+                                          : "（等待机载任务日志…启动任务后这里会实时刷新）"
+                                }
                             }
                         }
                     }
@@ -986,6 +1101,314 @@ Item {
                                     font.pixelSize: 11; font.family: "Consolas"; color: "#8B949E"
                                     background: null
                                     onTextChanged: cursorPosition = length
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ═══════════════════════════════════════
+            //  3D Grid Map View (centerView === 3)
+            // ═══════════════════════════════════════
+            Item {
+                id: gridMapRoot
+                anchors.fill: parent
+                visible: centerView === 3
+
+                property real camYaw: 45
+                property real camPitch: -35
+                property real camDist: 15
+                property real camTX: 0
+                property real camTY: 0
+                property real camTZ: 0
+                property bool goalMode: false
+                property real goalX: 0
+                property real goalY: 0
+                property real goalZ: 0
+                property bool goalVisible: false
+
+                function updateCam() {
+                    var yr = camYaw * Math.PI / 180
+                    var pr = camPitch * Math.PI / 180
+                    var cp = Math.cos(pr)
+                    gridCam.position = Qt.vector3d(
+                        camTX + camDist * cp * Math.sin(yr),
+                        camTY - camDist * Math.sin(pr),
+                        camTZ + camDist * cp * Math.cos(yr)
+                    )
+                    gridCam.lookAt(Qt.vector3d(camTX, camTY, camTZ))
+                }
+
+                Component.onCompleted: updateCam()
+
+                View3D {
+                    id: gridView3d
+                    anchors.fill: parent
+
+                    environment: SceneEnvironment {
+                        clearColor: "#0D1117"
+                        backgroundMode: SceneEnvironment.Color
+                    }
+
+                    PerspectiveCamera { id: gridCam; clipNear: 0.1; clipFar: 500 }
+
+                    DirectionalLight {
+                        eulerRotation.x: -45; eulerRotation.y: 30
+                        brightness: 0.8; ambientColor: Qt.rgba(0.4, 0.4, 0.45, 1.0)
+                    }
+
+                    // Invisible pick plane (large, at Y=0)
+                    Model {
+                        id: pickPlane
+                        position: Qt.vector3d(0, -0.01, 0)
+                        scale: Qt.vector3d(2.0, 0.0001, 2.0)
+                        source: "#Cube"
+                        pickable: true
+                        materials: PrincipledMaterial { baseColor: "black"; opacity: 0.0 }
+                    }
+
+                    // Goal marker
+                    Node {
+                        visible: gridMapRoot.goalVisible
+                        position: Qt.vector3d(gridMapRoot.goalX, 0, gridMapRoot.goalY)
+
+                        // Vertical pole
+                        Model {
+                            position: Qt.vector3d(0, 1.5, 0)
+                            scale: Qt.vector3d(0.00008, 0.03, 0.00008)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: "#F0883E"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                        // Diamond top
+                        Model {
+                            position: Qt.vector3d(0, 3.2, 0)
+                            eulerRotation.z: 45
+                            scale: Qt.vector3d(0.002, 0.002, 0.002)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: "#F0883E"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                        // Base ring
+                        Model {
+                            scale: Qt.vector3d(0.004, 0.0003, 0.004)
+                            source: "#Cylinder"
+                            materials: PrincipledMaterial { baseColor: "#F0883E"; opacity: 0.5; lighting: PrincipledMaterial.NoLighting }
+                        }
+                    }
+
+                    // Ground grid lines (Z=0 plane, 20m range, 1m spacing)
+                    Repeater3D {
+                        model: 41
+                        Model {
+                            property real offset: (index - 20)
+                            position: Qt.vector3d(offset, 0, 0)
+                            scale: Qt.vector3d(0.00005, 0.00005, 0.40)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: Math.abs(offset) < 0.01 ? "#3A4258" : "#1C2333"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                    }
+                    Repeater3D {
+                        model: 41
+                        Model {
+                            property real offset: (index - 20)
+                            position: Qt.vector3d(0, 0, offset)
+                            scale: Qt.vector3d(0.40, 0.00005, 0.00005)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: Math.abs(offset) < 0.01 ? "#3A4258" : "#1C2333"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                    }
+
+                    // Origin axes: Red=X(East), Green=Y(North→-Z), Blue=Z(Up→Y)
+                    Model { position: Qt.vector3d(1, 0, 0); scale: Qt.vector3d(0.02, 0.0001, 0.0001); source: "#Cube"; materials: PrincipledMaterial { baseColor: "#F85149"; lighting: PrincipledMaterial.NoLighting } }
+                    Model { position: Qt.vector3d(0, 0, -1); scale: Qt.vector3d(0.0001, 0.0001, 0.02); source: "#Cube"; materials: PrincipledMaterial { baseColor: "#3FB950"; lighting: PrincipledMaterial.NoLighting } }
+                    Model { position: Qt.vector3d(0, 1, 0); scale: Qt.vector3d(0.0001, 0.02, 0.0001); source: "#Cube"; materials: PrincipledMaterial { baseColor: "#58A6FF"; lighting: PrincipledMaterial.NoLighting } }
+
+                    // Voxels
+                    Model {
+                        source: "#Cube"
+                        instancing: VoxelInstanceTable { id: overviewVoxelTable; store: telemetryStore }
+                        materials: PrincipledMaterial { baseColor: "white" }
+                    }
+
+                    // UAV trail (blue dots)
+                    Model {
+                        source: "#Sphere"
+                        instancing: TrailInstanceTable { store: telemetryStore }
+                        materials: PrincipledMaterial { baseColor: "white"; lighting: PrincipledMaterial.NoLighting }
+                    }
+
+                    // EGO planned path (green dots)
+                    Model {
+                        source: "#Sphere"
+                        instancing: PlannedPathInstanceTable { store: telemetryStore }
+                        materials: PrincipledMaterial { baseColor: "white"; lighting: PrincipledMaterial.NoLighting }
+                    }
+
+                    // UAV body + yaw-aligned axes
+                    Node {
+                        visible: appState.connected
+                        position: Qt.vector3d(appState.positionX, appState.positionZ, -appState.positionY)
+                        eulerRotation.y: appState.yaw
+
+                        // UAV body (small sphere)
+                        Model {
+                            scale: Qt.vector3d(0.002, 0.002, 0.002)
+                            source: "#Sphere"
+                            materials: PrincipledMaterial { baseColor: "#E6EDF3"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                        // Forward axis (red, X/East in body frame)
+                        Model {
+                            position: Qt.vector3d(0.3, 0, 0)
+                            scale: Qt.vector3d(0.006, 0.00008, 0.00008)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: "#F85149"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                        // Left axis (green, Y/North in body frame)
+                        Model {
+                            position: Qt.vector3d(0, 0, -0.3)
+                            scale: Qt.vector3d(0.00008, 0.00008, 0.006)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: "#3FB950"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                        // Up axis (blue, Z)
+                        Model {
+                            position: Qt.vector3d(0, 0.3, 0)
+                            scale: Qt.vector3d(0.00008, 0.006, 0.00008)
+                            source: "#Cube"
+                            materials: PrincipledMaterial { baseColor: "#58A6FF"; lighting: PrincipledMaterial.NoLighting }
+                        }
+                    }
+                }
+
+                // Orbit + Goal click controls
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+                    property real lx: 0; property real ly: 0; property int btn: 0
+                    property bool dragged: false
+
+                    onPressed: function(m) { lx = m.x; ly = m.y; btn = m.button; dragged = false }
+                    onReleased: function(m) {
+                        if (btn === Qt.LeftButton && gridMapRoot.goalMode && !dragged) {
+                            var result = gridView3d.pick(m.x, m.y)
+                            if (result.objectHit) {
+                                var sp = result.scenePosition
+                                var enuX = sp.x
+                                var enuY = -sp.z
+                                var enuZ = appState.positionZ > 0.3 ? appState.positionZ : 1.0
+                                gridMapRoot.goalX = sp.x
+                                gridMapRoot.goalY = sp.z
+                                gridMapRoot.goalVisible = true
+
+                                var goalCmd = "rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
+                                    + "'{header: {frame_id: \"world\"}, pose: {position: {x: "
+                                    + enuX.toFixed(2) + ", y: " + enuY.toFixed(2) + ", z: " + enuZ.toFixed(2)
+                                    + "}, orientation: {w: 1}}}'"
+                                var triggerCmd = "rostopic pub -1 /traj_start_trigger geometry_msgs/PoseStamped "
+                                    + "'{header: {frame_id: \"world\"}, pose: {orientation: {w: 1}}}'"
+                                appState.sendRemoteScript(goalCmd + " && " + triggerCmd)
+                            }
+                        }
+                        btn = 0
+                    }
+                    onPositionChanged: function(m) {
+                        if (!btn) return
+                        var dx = m.x - lx, dy = m.y - ly
+                        if (Math.abs(dx) > 3 || Math.abs(dy) > 3) dragged = true
+                        lx = m.x; ly = m.y
+
+                        if (gridMapRoot.goalMode && btn === Qt.LeftButton) return
+
+                        if (btn === Qt.LeftButton) {
+                            parent.camYaw += dx * 0.3
+                            parent.camPitch = Math.max(-89, Math.min(89, parent.camPitch - dy * 0.3))
+                        } else {
+                            var sp = parent.camDist * 0.003, yr = parent.camYaw * Math.PI / 180
+                            parent.camTX -= (dx * Math.cos(yr) + dy * Math.sin(yr)) * sp * 0.5
+                            parent.camTZ += (dx * Math.sin(yr) - dy * Math.cos(yr)) * sp * 0.5
+                        }
+                        parent.updateCam()
+                    }
+                    onWheel: function(w) {
+                        parent.camDist *= w.angleDelta.y > 0 ? 0.9 : 1.1
+                        parent.camDist = Math.max(1, Math.min(100, parent.camDist))
+                        parent.updateCam()
+                    }
+                }
+
+                // Info overlay (bottom-left)
+                Row {
+                    anchors.bottom: parent.bottom; anchors.left: parent.left
+                    anchors.margins: 8; spacing: 6; z: 10
+
+                    Rectangle {
+                        width: voxInfo.width + 12; height: 22; radius: 4; color: "#21262DCC"
+                        Text { id: voxInfo; anchors.centerIn: parent; text: overviewVoxelTable.voxelCount + " voxels"; color: "#3FB950"; font.pixelSize: 10 }
+                    }
+                    Rectangle {
+                        width: focBtn.width + 12; height: 22; radius: 4; color: focMa.containsMouse ? "#30363D" : "#21262DCC"
+                        Text { id: focBtn; anchors.centerIn: parent; text: "Focus UAV"; color: "#C9D1D9"; font.pixelSize: 10 }
+                        MouseArea { id: focMa; anchors.fill: parent; hoverEnabled: true; onClicked: { gridMapRoot.camTX = appState.positionX; gridMapRoot.camTY = appState.positionZ; gridMapRoot.camTZ = -appState.positionY; gridMapRoot.updateCam() } }
+                    }
+                    Rectangle {
+                        width: goalBtn.width + 12; height: 22; radius: 4
+                        color: gridMapRoot.goalMode ? "#1F6FEB" : (goalMa.containsMouse ? "#30363D" : "#21262DCC")
+                        border.color: gridMapRoot.goalMode ? "#58A6FF" : "transparent"
+                        Text { id: goalBtn; anchors.centerIn: parent; text: gridMapRoot.goalMode ? "Goal Mode ON" : "Set Goal"; color: gridMapRoot.goalMode ? "#FFF" : "#C9D1D9"; font.pixelSize: 10 }
+                        MouseArea { id: goalMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: gridMapRoot.goalMode = !gridMapRoot.goalMode }
+                    }
+                    Rectangle {
+                        visible: gridMapRoot.goalVisible
+                        width: clearGoalBtn.width + 12; height: 22; radius: 4; color: clearMa.containsMouse ? "#6E1A1A" : "#21262DCC"
+                        Text { id: clearGoalBtn; anchors.centerIn: parent; text: "Clear Goal"; color: "#F85149"; font.pixelSize: 10 }
+                        MouseArea { id: clearMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: gridMapRoot.goalVisible = false }
+                    }
+                }
+
+                // Planner controls (bottom-right)
+                Row {
+                    anchors.bottom: parent.bottom; anchors.right: parent.right
+                    anchors.margins: 8; spacing: 6; z: 10
+
+                    // EGO controls
+                    Rectangle {
+                        width: egoRow.width + 16; height: 26; radius: 6; color: "#161B22CC"; border.color: "#30363D"
+                        Row {
+                            id: egoRow; anchors.centerIn: parent; spacing: 4
+                            Text { text: "EGO"; color: "#58A6FF"; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Repeater {
+                                model: [
+                                    { label: "Start", color: "#1A4A2E", cmd: "bash ~/opi-drone-cxr-demo/ego_start.sh" },
+                                    { label: "Stop",  color: "#6E1A1A", cmd: "bash ~/opi-drone-cxr-demo/ego_stop.sh" },
+                                    { label: "Restart", color: "#1A3A5C", cmd: "bash ~/opi-drone-cxr-demo/ego_restart.sh" }
+                                ]
+                                delegate: Rectangle {
+                                    width: btnLbl.width + 12; height: 18; radius: 3
+                                    color: btnMa.containsMouse ? Qt.lighter(modelData.color, 1.3) : modelData.color
+                                    Text { id: btnLbl; anchors.centerIn: parent; text: modelData.label; color: "#E6EDF3"; font.pixelSize: 9 }
+                                    MouseArea { id: btnMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appState.sendRemoteScript(modelData.cmd) }
+                                }
+                            }
+                        }
+                    }
+
+                    // FUEL controls (same layout, reserved)
+                    Rectangle {
+                        width: fuelRow.width + 16; height: 26; radius: 6; color: "#161B22CC"; border.color: "#30363D"
+                        Row {
+                            id: fuelRow; anchors.centerIn: parent; spacing: 4
+                            Text { text: "FUEL"; color: "#F0883E"; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Repeater {
+                                model: [
+                                    { label: "Start", color: "#1A4A2E", cmd: "bash -c 'source ~/opi-drone-cxr-demo/cxr_fuel_ws/devel/setup.bash && roslaunch exploration_manager exploration.launch --no-summary &'" },
+                                    { label: "Stop",  color: "#6E1A1A", cmd: "rosnode kill /exploration_node /fuel_nav 2>/dev/null" },
+                                    { label: "Restart", color: "#1A3A5C", cmd: "rosnode kill /exploration_node /fuel_nav 2>/dev/null; sleep 2; bash -c 'source ~/opi-drone-cxr-demo/cxr_fuel_ws/devel/setup.bash && roslaunch exploration_manager exploration.launch --no-summary &'" }
+                                ]
+                                delegate: Rectangle {
+                                    width: fuelLbl.width + 12; height: 18; radius: 3
+                                    color: fuelMa.containsMouse ? Qt.lighter(modelData.color, 1.3) : modelData.color
+                                    Text { id: fuelLbl; anchors.centerIn: parent; text: modelData.label; color: "#E6EDF3"; font.pixelSize: 9 }
+                                    MouseArea { id: fuelMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appState.sendRemoteScript(modelData.cmd) }
                                 }
                             }
                         }
@@ -1111,11 +1534,133 @@ Item {
                         Column {
                             visible: quickCmdSection.expanded; width: parent.width; spacing: 4
 
-                            // 起飞按钮：长按 1.2s 确认（防误触），未解锁+odom有效+连接通才高亮
+                            // ── 解锁前检查：PX4 SYS_STATUS 传感器健康位（机载 preflight_reporter 上报）──
+                            Rectangle {
+                                id: preflightPanel
+                                width: parent.width
+                                height: pfCol.implicitHeight + 12
+                                radius: 5
+                                color: "#0D1117"
+                                border.width: 1
+                                border.color: !appState.preflightValid ? "#30363D"
+                                            : (appState.preflightArmOk ? "#2A5A34" : "#6E2B2B")
+
+                                Column {
+                                    id: pfCol
+                                    anchors.fill: parent
+                                    anchors.margins: 6
+                                    spacing: 3
+
+                                    Row {
+                                        spacing: 6
+                                        Rectangle {
+                                            width: 8; height: 8; radius: 4
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            color: !appState.preflightValid ? "#484F58"
+                                                 : (appState.preflightArmOk ? "#3FB950" : "#F85149")
+                                        }
+                                        Text {
+                                            // 措辞按可信度区分：飞控上报 PREARM_CHECK 位时才是权威判据，
+                                            // 否则只代表"传感器自检"，不能等同于飞控允许解锁。
+                                            text: !appState.preflightValid ? "解锁检查 — 无数据"
+                                                : !appState.preflightArmOk ? "不可解锁"
+                                                : (appState.preflightPrearmBit ? "可安全解锁" : "传感器自检通过")
+                                            color: !appState.preflightValid ? "#8B949E"
+                                                 : (appState.preflightArmOk ? "#3FB950" : "#F85149")
+                                            font.pixelSize: 11; font.bold: true
+                                        }
+                                    }
+
+                                    // 自检通过但飞控未提供权威位时，明确提示这不是完整判据
+                                    Text {
+                                        visible: appState.preflightValid && appState.preflightArmOk
+                                                 && !appState.preflightPrearmBit
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap
+                                        text: "仅传感器健康位，未覆盖遥控/模式/安全开关/参数等检查"
+                                        color: "#8B949E"; font.pixelSize: 9
+                                    }
+
+                                    // 上次解锁尝试被飞控拒绝 —— 这是 100% 真实的拒绝信号
+                                    Row {
+                                        visible: appState.preflightArmAck > 0
+                                        spacing: 5
+                                        Text { text: "⚠"; color: "#D29922"; font.pixelSize: 10 }
+                                        Text {
+                                            text: "上次解锁被飞控拒绝：" + appState.preflightArmAckText
+                                            color: "#D29922"; font.pixelSize: 10
+                                        }
+                                    }
+
+                                    // 仅列出故障项；全部正常时不占地方
+                                    Repeater {
+                                        model: appState.preflightChecks
+                                        delegate: Row {
+                                            visible: !modelData.healthy
+                                            spacing: 5
+                                            Text { text: "✕"; color: "#F85149"; font.pixelSize: 10 }
+                                            Text {
+                                                text: modelData.name + (modelData.enabled ? "" : "（未启用）")
+                                                color: "#D9A2A2"; font.pixelSize: 10
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── 重启飞控 + ODIN 定位 + 控制状态机（获得干净状态机）──
+                            // 双重保护：已解锁时禁用 + 长按 1.5s 确认。
+                            // 机载脚本自身也会再查一次 armed，解锁状态下拒绝执行。
+                            Rectangle {
+                                id: rebootBtn
+                                width: parent.width; height: 32; radius: 5
+                                property bool ready: appState.connected && !appState.armed
+                                property real holdProgress: 0.0
+                                color: ready ? (holdProgress > 0 ? "#7A2E2E" : "#4A2020") : "#2A1C1C"
+                                border.color: ready ? "#C25050" : "#4A3535"; border.width: 1
+
+                                Rectangle {
+                                    anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                    width: parent.width * rebootBtn.holdProgress; radius: 5
+                                    color: "#C25050"; opacity: 0.45
+                                }
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: !appState.connected ? "重启机载栈 — 未连接"
+                                        : appState.armed ? "重启机载栈 — 已解锁，禁止"
+                                        : (rebootBtn.holdProgress > 0 ? "重启中… 松手取消"
+                                                                      : "⟳ 重启飞控+定位+状态机（长按 1.5s）")
+                                    color: rebootBtn.ready ? "#FFD9D9" : "#6E5050"
+                                    font.pixelSize: 11; font.bold: true
+                                }
+                                Timer {
+                                    id: rebootTimer; interval: 50; repeat: true
+                                    onTriggered: {
+                                        rebootBtn.holdProgress += 0.05 / 1.5
+                                        if (rebootBtn.holdProgress >= 1.0) {
+                                            rebootTimer.stop()
+                                            rebootBtn.holdProgress = 0.0
+                                            appState.sendRemoteScript("bash /home/jetson/Zenith_ws/shfiles/zenith_reboot_stack.sh")
+                                        }
+                                    }
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: rebootBtn.ready
+                                    cursorShape: rebootBtn.ready ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onPressed: { rebootBtn.holdProgress = 0.0; rebootTimer.start() }
+                                    onReleased: { rebootTimer.stop(); rebootBtn.holdProgress = 0.0 }
+                                    onCanceled: { rebootTimer.stop(); rebootBtn.holdProgress = 0.0 }
+                                }
+                            }
+
+                            // 起飞按钮：长按 1.2s 确认（防误触）
+                            // ready 条件加入解锁前检查：有上报且判定不可解锁时禁用（无上报则不阻断，保持旧行为）
                             Rectangle {
                                 id: takeoffBtn
                                 width: parent.width; height: 32; radius: 5
                                 property bool ready: !appState.armed && appState.odomValid && appState.connected && !appState.failsafe
+                                                     && (!appState.preflightValid || appState.preflightArmOk)
                                 property real holdProgress: 0.0
                                 color: ready ? (holdProgress > 0 ? "#B85A1A" : "#7A3F0E") : "#3A2A1A"
                                 border.color: ready ? "#E07A30" : "#5A3F30"; border.width: 1

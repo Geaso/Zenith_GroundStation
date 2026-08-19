@@ -35,6 +35,10 @@ public:
 
     Q_INVOKABLE void addAction(const QString &name, const QString &command, const QString &target);
     Q_INVOKABLE void removeAction(int row);
+    Q_INVOKABLE void updateCommand(int row, const QString &newCommand);
+
+    // 从外置 JSON 载入任务清单，成功返回 true
+    bool loadFromFile(const QString &path);
 
 private:
     QList<ScriptActionItem> m_items;

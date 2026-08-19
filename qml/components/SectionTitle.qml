@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import ZenithUI 1.0
 
 Row {
     id: root

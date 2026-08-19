@@ -1,23 +1,58 @@
 [
   {
-    "name": "Indoor D435i Avoidance",
-    "command": "experiment/scripts/d435i_ego_indoor.sh",
+    "name": "EGO Planner",
+    "command": "bash -c 'source ~/opi-drone-cxr-demo/Fast-Drone-250/devel/setup.bash && roslaunch ego_planner single_run_in_exp.launch'",
     "target": "Send To Current UAV",
-    "category": "Avoidance",
-    "confirm": false
+    "note": "EGO避障规划器",
+    "category": "Planner"
   },
   {
-    "name": "Aruco Tracking",
-    "command": "tt/scripts/aruco_detection_with_d435i.sh",
+    "name": "EGO Controller",
+    "command": "bash -c 'source ~/opi-drone-cxr-demo/Fast-Drone-250/devel/setup.bash && rosrun ego_planner cxr_ctrl'",
     "target": "Send To Current UAV",
-    "category": "Perception",
-    "confirm": false
+    "note": "EGO轨迹跟踪控制器",
+    "category": "Planner"
   },
   {
-    "name": "Emergency Return Script",
-    "command": "scripts/emergency_return.sh",
+    "name": "VIO Recovery",
+    "command": "bash ~/opi-drone-cxr-demo/vio_recovery.sh",
     "target": "Send To Current UAV",
-    "category": "Mission",
-    "confirm": true
+    "note": "重启VINS相机+定位",
+    "category": "Utility"
+  },
+  {
+    "name": "AprilTag Demo",
+    "command": "bash ~/Zenith_ws/src/zenith_apriltag_demo/scripts/start_demo_lingkong1.sh tmux",
+    "target": "Send To Current UAV",
+    "note": "前摄搜tag→下摄精降双摄精降demo (Zenith COMMAND_CONTROL 触发)",
+    "category": "Demo"
+  },
+  {
+    "name": "八字轨迹",
+    "command": "rosrun zenith_communication_bridge zenith_run_task.py 八字轨迹 roslaunch zenith_demo figure8_trajectory_control.launch",
+    "target": "Send To Current UAV",
+    "note": "figure8_trajectory_control；终端输出实时回传；停止用 rosnode kill /figure8_trajectory_control",
+    "category": "Mission"
+  },
+  {
+    "name": "圆形轨迹",
+    "command": "rosrun zenith_communication_bridge zenith_run_task.py 圆形轨迹 roslaunch zenith_demo circular_trajectory_control.launch",
+    "target": "Send To Current UAV",
+    "note": "circular_trajectory_control；终端输出实时回传；停止用 rosnode kill /circular_trajectory_control",
+    "category": "Mission"
+  },
+  {
+    "name": "停止八字",
+    "command": "rosnode kill /figure8_trajectory_control",
+    "target": "Send To Current UAV",
+    "note": "结束八字轨迹任务",
+    "category": "Mission"
+  },
+  {
+    "name": "停止圆形",
+    "command": "rosnode kill /circular_trajectory_control",
+    "target": "Send To Current UAV",
+    "note": "结束圆形轨迹任务",
+    "category": "Mission"
   }
 ]

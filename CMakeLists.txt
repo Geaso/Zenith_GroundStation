@@ -8,8 +8,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network SerialPort)
-find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network SerialPort)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network SerialPort Quick3D)
+
+qt_standard_project_setup(REQUIRES 6.5)
 
 set(APP_SOURCES
     src/main.cpp
@@ -31,35 +32,80 @@ set(APP_SOURCES
     src/ParamStore.h
     src/ZenithProtocol.h
     src/ZenithMsgPack.h
+    src/GridMapImageProvider.h
+    src/VoxelInstanceTable.h
+    src/TrailInstanceTable.h
+    src/PlannedPathInstanceTable.h
     resources/qml.qrc
 )
 
-if(QT_VERSION_MAJOR EQUAL 6)
-    qt_add_executable(${PROJECT_NAME}
-        WIN32
-        MANUAL_FINALIZATION
-        ${APP_SOURCES}
-    )
-else()
-    add_executable(${PROJECT_NAME}
-        WIN32
-        ${APP_SOURCES}
-    )
-endif()
+qt_add_executable(${PROJECT_NAME} WIN32 MANUAL_FINALIZATION ${APP_SOURCES})
+
+# QML 走模块化，触发 qmlcachegen 把每个 .qml 编成字节码单元。
+# 注意：模块内的类型靠 "import ZenithUI 1.0" 解析，不要再用 import "components" 这类目录导入，
+# 因为下面剥掉 raw 资源后 qrc 里已经没有目录结构了。
+qt_add_qml_module(${PROJECT_NAME}
+    URI ZenithUI
+    VERSION 1.0
+    QML_FILES
+        qml/Main.qml
+        qml/components/InfoCard.qml
+        qml/components/MetricTile.qml
+        qml/components/SectionTitle.qml
+        qml/components/PrimaryButton.qml
+        qml/components/StatusPill.qml
+        qml/pages/OverviewPage.qml
+        qml/pages/ModulesPage.qml
+        qml/pages/ScriptsPage.qml
+        qml/pages/ParamsPage.qml
+        qml/pages/MapPage.qml
+)
 
 target_include_directories(${PROJECT_NAME} PRIVATE src)
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
-        Qt${QT_VERSION_MAJOR}::Core
-        Qt${QT_VERSION_MAJOR}::Gui
-        Qt${QT_VERSION_MAJOR}::Qml
-        Qt${QT_VERSION_MAJOR}::Quick
-        Qt${QT_VERSION_MAJOR}::QuickControls2
-        Qt${QT_VERSION_MAJOR}::Network
-        Qt${QT_VERSION_MAJOR}::SerialPort
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Qml
+        Qt6::Quick
+        Qt6::QuickControls2
+        Qt6::Network
+        Qt6::SerialPort
+        Qt6::Quick3D
 )
 
-if(QT_VERSION_MAJOR EQUAL 6)
-    qt_finalize_executable(${PROJECT_NAME})
+# ---------------------------------------------------------------------------
+# 闭源加固
+# ---------------------------------------------------------------------------
+# qt_add_qml_module() 在生成字节码之外，还会无条件把 QML 源码原样打进一份
+# "<target>_raw_qml_N" 资源（见 Qt6QmlMacros.cmake 中的 qt6_add_resources 调用）。
+# 开源版 Qt 没有提供关闭它的开关，只能在这里把这份资源从目标源文件里摘掉。
+# 摘掉后 exe 内不再含任何 QML 明文，运行时由 qmlcachegen 的字节码单元接管。
+get_target_property(_zenith_srcs ${PROJECT_NAME} SOURCES)
+set(_zenith_kept "")
+foreach(_s IN LISTS _zenith_srcs)
+    if(_s MATCHES "raw_qml")
+        message(STATUS "[closed-source] 剥离 QML 源码资源: ${_s}")
+    else()
+        list(APPEND _zenith_kept "${_s}")
+    endif()
+endforeach()
+set_property(TARGET ${PROJECT_NAME} PROPERTY SOURCES "${_zenith_kept}")
+
+# Release 下隐藏符号并 strip，缩小可逆向的信息面
+if(CMAKE_BUILD_TYPE STREQUAL "Release")
+    target_compile_options(${PROJECT_NAME} PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+    target_link_options(${PROJECT_NAME} PRIVATE -s)
 endif()
+
+# 任务清单外置：编译后拷到 exe 同级，保证开发运行与客户分发的加载路径一致
+add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/script_actions.json"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/script_actions.json"
+    COMMENT "拷贝任务清单 config/script_actions.json"
+)
+
+qt_finalize_executable(${PROJECT_NAME})

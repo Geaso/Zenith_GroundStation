@@ -1,6 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
-import "../components"
+import ZenithUI 1.0
 
 Item {
     Column {
@@ -122,11 +122,13 @@ Item {
                         }
                         Item { width: 10 }
 
-                        // 指令
-                        Text {
+                        // 指令（可编辑）
+                        TextField {
                             width: parent.width - 160 - 210 - 200 - 30
-                            text: command; color:"#8B949E"; font.pixelSize:12; font.family:"Monospace"
-                            elide:Text.ElideRight; anchors.verticalCenter:parent.verticalCenter
+                            text: command; color:"#E6EDF3"; font.pixelSize:12; font.family:"Monospace"
+                            anchors.verticalCenter: parent.verticalCenter
+                            background: Rectangle { radius: 4; color: activeFocus ? "#161B22" : "transparent"; border.color: activeFocus ? "#30363D" : "transparent" }
+                            onEditingFinished: scriptActionModel.updateCommand(index, text)
                         }
 
                         // 发送方式

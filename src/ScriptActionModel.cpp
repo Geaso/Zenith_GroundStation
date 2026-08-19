@@ -1,14 +1,73 @@
 #include "ScriptActionModel.h"
 
-ScriptActionModel::ScriptActionModel(QObject *parent)
-    : QAbstractListModel(parent),
-      m_items({
-          {"Indoor D435i Avoidance", "experiment/scripts/d435i_ego_indoor.sh", "Send To Current UAV", "Indoor visual avoidance workflow", "Avoidance", "Ready", "10:22"},
-          {"Lidar-EGO Avoidance", "rc/p450_experiment/scripts/lidar_ego.sh", "Send To Current UAV", "Lidar navigation stack", "Navigation", "Last Success", "09:47"},
-          {"Aruco Tracking", "tt/scripts/aruco_detection_with_d435i.sh", "Send To Current UAV", "Vision target tracking", "Perception", "Running", "In Progress"},
-          {"Vision Detection Link", "ots/car_detection_with_tracking_d435i.sh", "Send To Current UAV", "Detection and tracking link", "Diagnostics", "Failed", "08:15"}
-      })
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLoggingCategory>
+
+namespace {
+
+// 任务按钮清单外置在 exe 同级的 config/script_actions.json，客户可自行增删。
+// 刻意不在 C++ 里保留一份硬编码副本：那样会把全部 ROS 命令和机载路径
+// 以明文字符串留在 exe 里，与闭源分发的目标相悖。
+QString scriptConfigPath()
 {
+    return QDir(QCoreApplication::applicationDirPath()).filePath("config/script_actions.json");
+}
+
+} // namespace
+
+ScriptActionModel::ScriptActionModel(QObject *parent)
+    : QAbstractListModel(parent)
+{
+    loadFromFile(scriptConfigPath());
+}
+
+bool ScriptActionModel::loadFromFile(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning("未找到任务清单 %s，任务页将为空", qUtf8Printable(path));
+        return false;
+    }
+
+    QJsonParseError err{};
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &err);
+    if (err.error != QJsonParseError::NoError || !doc.isArray()) {
+        qWarning("任务清单 %s 解析失败: %s", qUtf8Printable(path), qUtf8Printable(err.errorString()));
+        return false;
+    }
+
+    QList<ScriptActionItem> parsed;
+    const QJsonArray arr = doc.array();
+    for (const QJsonValue &v : arr) {
+        if (!v.isObject()) {
+            continue;
+        }
+        const QJsonObject o = v.toObject();
+        const QString name = o.value("name").toString();
+        const QString command = o.value("command").toString();
+        if (name.isEmpty() || command.isEmpty()) {
+            continue;
+        }
+        parsed.append({
+            name,
+            command,
+            o.value("target").toString(QStringLiteral("Send To Current UAV")),
+            o.value("note").toString(),
+            o.value("category").toString(QStringLiteral("Custom")),
+            QStringLiteral("Ready"),
+            QString()
+        });
+    }
+
+    beginResetModel();
+    m_items = parsed;
+    endResetModel();
+    return true;
 }
 
 int ScriptActionModel::rowCount(const QModelIndex &parent) const
@@ -73,4 +132,11 @@ void ScriptActionModel::removeAction(int row)
     beginRemoveRows(QModelIndex(), row, row);
     m_items.removeAt(row);
     endRemoveRows();
+}
+
+void ScriptActionModel::updateCommand(int row, const QString &newCommand)
+{
+    if (row < 0 || row >= m_items.size()) return;
+    m_items[row].command = newCommand;
+    emit dataChanged(index(row), index(row), {CommandRole});
 }
