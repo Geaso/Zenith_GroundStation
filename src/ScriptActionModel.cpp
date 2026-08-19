@@ -10,9 +10,8 @@
 
 namespace {
 
-// 任务按钮清单外置在 exe 同级的 config/script_actions.json，客户可自行增删。
-// 刻意不在 C++ 里保留一份硬编码副本：那样会把全部 ROS 命令和机载路径
-// 以明文字符串留在 exe 里，与闭源分发的目标相悖。
+// 任务卡片清单外置在 exe 同级的 config/script_actions.json。文件只保存
+// 稳定 task_id；真正的 roslaunch argv 在机载白名单中，地面站不下发 shell。
 QString scriptConfigPath()
 {
     return QDir(QCoreApplication::applicationDirPath()).filePath("config/script_actions.json");
@@ -49,14 +48,14 @@ bool ScriptActionModel::loadFromFile(const QString &path)
         }
         const QJsonObject o = v.toObject();
         const QString name = o.value("name").toString();
-        const QString command = o.value("command").toString();
+        const QString command = o.value("task_id").toString();
         if (name.isEmpty() || command.isEmpty()) {
             continue;
         }
         parsed.append({
             name,
             command,
-            o.value("target").toString(QStringLiteral("Send To Current UAV")),
+            QStringLiteral("Managed Task API"),
             o.value("note").toString(),
             o.value("category").toString(QStringLiteral("Custom")),
             QStringLiteral("Ready"),
@@ -67,6 +66,7 @@ bool ScriptActionModel::loadFromFile(const QString &path)
     beginResetModel();
     m_items = parsed;
     endResetModel();
+    emit countChanged();
     return true;
 }
 
@@ -121,6 +121,7 @@ void ScriptActionModel::addAction(const QString &name, const QString &command, c
     beginInsertRows(QModelIndex(), row, row);
     m_items.append({name, command, target, "User defined action", "Custom", "Ready", "Just Created"});
     endInsertRows();
+    emit countChanged();
 }
 
 void ScriptActionModel::removeAction(int row)
@@ -132,6 +133,7 @@ void ScriptActionModel::removeAction(int row)
     beginRemoveRows(QModelIndex(), row, row);
     m_items.removeAt(row);
     endRemoveRows();
+    emit countChanged();
 }
 
 void ScriptActionModel::updateCommand(int row, const QString &newCommand)

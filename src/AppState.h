@@ -80,6 +80,12 @@ class AppState : public QObject
     Q_PROPERTY(QString currentTime READ currentTime NOTIFY telemetryChanged)
     Q_PROPERTY(QString lastCommand READ lastCommand NOTIFY telemetryChanged)
     Q_PROPERTY(QString commandAck READ commandAck NOTIFY telemetryChanged)
+    Q_PROPERTY(QString managedTaskName READ managedTaskName NOTIFY telemetryChanged)
+    Q_PROPERTY(QString managedTaskState READ managedTaskState NOTIFY telemetryChanged)
+    Q_PROPERTY(QString managedTaskReason READ managedTaskReason NOTIFY telemetryChanged)
+    Q_PROPERTY(QString managedTaskAck READ managedTaskAck NOTIFY telemetryChanged)
+    Q_PROPERTY(QString managedTaskRequestId READ managedTaskRequestId NOTIFY telemetryChanged)
+    Q_PROPERTY(bool managedTaskActive READ managedTaskActive NOTIFY telemetryChanged)
     Q_PROPERTY(QString remoteHostIp READ remoteHostIp NOTIFY linkSettingsChanged)
     Q_PROPERTY(int udpPort READ udpPort NOTIFY linkSettingsChanged)
     Q_PROPERTY(int tcpPort READ tcpPort NOTIFY linkSettingsChanged)
@@ -179,6 +185,12 @@ public:
     QString currentTime() const;
     QString lastCommand() const;
     QString commandAck() const;
+    QString managedTaskName() const;
+    QString managedTaskState() const;
+    QString managedTaskReason() const;
+    QString managedTaskAck() const;
+    QString managedTaskRequestId() const;
+    bool managedTaskActive() const;
     QString remoteHostIp() const;
     int udpPort() const;
     int tcpPort() const;
@@ -196,6 +208,9 @@ public:
     Q_INVOKABLE void issueCommand(const QString &commandName);
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScriptAction(const QString &name, const QString &command, const QString &target);
+    Q_INVOKABLE void startManagedTask(const QString &taskName);
+    Q_INVOKABLE void stopManagedTask(const QString &taskName);
+    Q_INVOKABLE void queryManagedTask();
     Q_INVOKABLE void sendRemoteScript(const QString &cmd);
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);

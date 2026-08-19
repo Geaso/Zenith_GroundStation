@@ -192,6 +192,12 @@ QString AppState::alertLevel() const { return m_alertLevel; }
 QString AppState::currentTime() const { return m_currentTime; }
 QString AppState::lastCommand() const { return m_lastCommand; }
 QString AppState::commandAck() const { return m_commandAck; }
+QString AppState::managedTaskName() const { return m_telemetryStore->managedTaskName(); }
+QString AppState::managedTaskState() const { return m_telemetryStore->managedTaskState(); }
+QString AppState::managedTaskReason() const { return m_telemetryStore->managedTaskReason(); }
+QString AppState::managedTaskAck() const { return m_telemetryStore->managedTaskAck(); }
+QString AppState::managedTaskRequestId() const { return m_telemetryStore->managedTaskRequestId(); }
+bool AppState::managedTaskActive() const { return m_telemetryStore->managedTaskActive(); }
 QString AppState::remoteHostIp() const { return m_remoteHostIp; }
 int AppState::udpPort() const { return m_udpPort; }
 int AppState::tcpPort() const { return m_tcpPort; }
@@ -228,6 +234,25 @@ void AppState::runScriptAction(const QString &name, const QString &command, cons
 {
     m_commandDispatcher->runScript(name, command, target);
     emit commandTriggered(QString("Script Run: %1").arg(name));
+}
+
+void AppState::startManagedTask(const QString &taskName)
+{
+    m_commandDispatcher->sendManagedTaskRequest(
+        taskName, QStringLiteral("START"),
+        taskName == QLatin1String("zenith_tracking_unified"));
+    emit commandTriggered(QStringLiteral("Task START: %1").arg(taskName));
+}
+
+void AppState::stopManagedTask(const QString &taskName)
+{
+    m_commandDispatcher->sendManagedTaskRequest(taskName, QStringLiteral("STOP"));
+    emit commandTriggered(QStringLiteral("Task STOP: %1").arg(taskName));
+}
+
+void AppState::queryManagedTask()
+{
+    m_commandDispatcher->sendManagedTaskRequest(QString(), QStringLiteral("STATUS"));
 }
 
 void AppState::sendRemoteScript(const QString &cmd)

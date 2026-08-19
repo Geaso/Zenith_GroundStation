@@ -89,6 +89,12 @@ QString TelemetryStore::alertLevel() const { return m_alertLevel; }
 QString TelemetryStore::currentTime() const { return m_currentTime; }
 QString TelemetryStore::lastCommand() const { return m_lastCommand; }
 QString TelemetryStore::commandAck() const { return m_commandAck; }
+QString TelemetryStore::managedTaskName() const { return m_managedTaskName; }
+QString TelemetryStore::managedTaskState() const { return m_managedTaskState; }
+QString TelemetryStore::managedTaskReason() const { return m_managedTaskReason; }
+QString TelemetryStore::managedTaskAck() const { return m_managedTaskAck; }
+QString TelemetryStore::managedTaskRequestId() const { return m_managedTaskRequestId; }
+bool TelemetryStore::managedTaskActive() const { return m_managedTaskActive; }
 QList<QPointF> TelemetryStore::pathPoints() const { return m_pathPoints; }
 QList<QPointF> TelemetryStore::waypointPoints() const { return m_waypointPoints; }
 
@@ -528,21 +534,23 @@ void TelemetryStore::applyCustomDataSegment(const QVariantMap &payload)
         return;
 
     bool touched = false;
+    bool preflightTouched = false;
     for (int i = 0; i < count; ++i) {
         const QString key = payload.value(QStringLiteral("name[%1]").arg(i)).toString();
-        if (!key.startsWith(QLatin1String("pf_")))
-            continue;
         const QString value = payload.value(QStringLiteral("value[%1]").arg(i)).toString();
 
         if (key == QLatin1String("pf_present")) {
             m_preflightPresent = static_cast<quint32>(value.toLongLong());
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("pf_enabled")) {
             m_preflightEnabled = static_cast<quint32>(value.toLongLong());
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("pf_health")) {
             m_preflightHealth = static_cast<quint32>(value.toLongLong());
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("pf_arm_ok")) {
             // 注意：机载 customDataSegmentCb 里 ROS 的 bool 字段是 uint8_t，
             // setValue() 重载会选中 int 版本，所以线上实际是 type=INTEGER、值 "1"/"0"，
@@ -550,9 +558,11 @@ void TelemetryStore::applyCustomDataSegment(const QVariantMap &payload)
             m_preflightArmOk = (value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
                             || (value.toInt() != 0);
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("pf_fail")) {
             m_preflightFail = value;
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("rd_mask")) {
             m_readyMask = value.toInt();
             touched = true;
@@ -566,17 +576,41 @@ void TelemetryStore::applyCustomDataSegment(const QVariantMap &payload)
             m_preflightPrearmBit = (value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0)
                                 || (value.toInt() != 0);
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("pf_arm_ack")) {
             m_preflightArmAck = value.toInt();
             touched = true;
+            preflightTouched = true;
         } else if (key == QLatin1String("pf_arm_ack_txt")) {
             m_preflightArmAckText = value;
+            touched = true;
+            preflightTouched = true;
+        } else if (key == QLatin1String("task_name")) {
+            m_managedTaskName = value;
+            touched = true;
+        } else if (key == QLatin1String("task_state")) {
+            m_managedTaskState = value;
+            touched = true;
+        } else if (key == QLatin1String("task_reason")) {
+            m_managedTaskReason = value;
+            touched = true;
+        } else if (key == QLatin1String("task_ack")) {
+            m_managedTaskAck = value;
+            touched = true;
+        } else if (key == QLatin1String("task_request_id")) {
+            m_managedTaskRequestId = value;
+            touched = true;
+        } else if (key == QLatin1String("task_active")) {
+            m_managedTaskActive =
+                value.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0
+                || value.toInt() != 0;
             touched = true;
         }
     }
 
     if (touched) {
-        m_preflightValid = true;
+        if (preflightTouched)
+            m_preflightValid = true;
         emit telemetryChanged();
     }
 }

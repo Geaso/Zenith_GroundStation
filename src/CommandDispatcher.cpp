@@ -5,6 +5,7 @@
 #include "ZenithProtocol.h"
 
 #include <QMap>
+#include <QDateTime>
 #include <cmath>
 
 CommandDispatcher::CommandDispatcher(TelemetryStore *telemetryStore, ZenithProtocolClient *protocolClient, QObject *parent)
@@ -146,6 +147,52 @@ void CommandDispatcher::runScript(const QString &name, const QString &command, c
 
     m_protocolClient->sendTcpMessage(ZenithProtocol::MODESELECTION, payload, m_telemetryStore->currentVehicleId());
     m_telemetryStore->setCommandFeedback(QString("StartScript: %1").arg(name), "Sent (awaiting CMD_ACK)");
+}
+
+void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
+                                                const QString &action,
+                                                bool yawEnable)
+{
+    const QString normalizedAction = action.trimmed().toUpper();
+    const QString commandName = QStringLiteral("ManagedTask %1 %2")
+                                    .arg(normalizedAction, taskName);
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, commandName)) {
+        return;
+    }
+
+    const QString requestId = QStringLiteral("gcs-%1-%2")
+                                  .arg(QDateTime::currentMSecsSinceEpoch())
+                                  .arg(m_taskRequestSequence++);
+    struct Field {
+        QString name;
+        int type;
+        QString value;
+    };
+    const QList<Field> fields = {
+        {QStringLiteral("task_schema"), 1, QStringLiteral("1")},
+        {QStringLiteral("task_request_id"), 5, requestId},
+        {QStringLiteral("task_name"), 5, taskName},
+        {QStringLiteral("task_action"), 5, normalizedAction},
+        {QStringLiteral("task_target_id"), 1, QStringLiteral("-1")},
+        {QStringLiteral("task_yaw_enable"), 2,
+         yawEnable ? QStringLiteral("true") : QStringLiteral("false")},
+    };
+
+    // JsonConverter in the aircraft bridge uses this indexed flat shape for
+    // CustomDataSegment_1 (message 113).
+    QVariantMap payload;
+    payload.insert(QStringLiteral("datas_num"), fields.size());
+    for (int i = 0; i < fields.size(); ++i) {
+        payload.insert(QStringLiteral("name[%1]").arg(i), fields.at(i).name);
+        payload.insert(QStringLiteral("type[%1]").arg(i), fields.at(i).type);
+        payload.insert(QStringLiteral("value[%1]").arg(i), fields.at(i).value);
+    }
+
+    m_protocolClient->sendTcpMessage(
+        ZenithProtocol::CUSTOMDATASEGMENT_1, payload,
+        m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback(
+        commandName, QStringLiteral("已发送，等待机载任务 ACK (%1)").arg(requestId));
 }
 
 void CommandDispatcher::armVehicle(bool arm)

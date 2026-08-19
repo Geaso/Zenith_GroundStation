@@ -14,6 +14,8 @@ public:
     Q_INVOKABLE void issueQuickAction(const QString &name);
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScript(const QString &name, const QString &command, const QString &target);
+    Q_INVOKABLE void sendManagedTaskRequest(const QString &taskName, const QString &action,
+                                            bool yawEnable = false);
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);
     Q_INVOKABLE void switchLocationSource(int sourceIndex);
@@ -30,4 +32,5 @@ private:
     TelemetryStore *m_telemetryStore = nullptr;
     ZenithProtocolClient *m_protocolClient = nullptr;
     quint32 m_commandId = 1;
+    quint32 m_taskRequestSequence = 1;
 };

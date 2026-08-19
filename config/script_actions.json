@@ -1,58 +1,26 @@
 [
   {
-    "name": "EGO Planner",
-    "command": "bash -c 'source ~/opi-drone-cxr-demo/Fast-Drone-250/devel/setup.bash && roslaunch ego_planner single_run_in_exp.launch'",
-    "target": "Send To Current UAV",
-    "note": "EGO避障规划器",
-    "category": "Planner"
-  },
-  {
-    "name": "EGO Controller",
-    "command": "bash -c 'source ~/opi-drone-cxr-demo/Fast-Drone-250/devel/setup.bash && rosrun ego_planner cxr_ctrl'",
-    "target": "Send To Current UAV",
-    "note": "EGO轨迹跟踪控制器",
-    "category": "Planner"
-  },
-  {
-    "name": "VIO Recovery",
-    "command": "bash ~/opi-drone-cxr-demo/vio_recovery.sh",
-    "target": "Send To Current UAV",
-    "note": "重启VINS相机+定位",
-    "category": "Utility"
-  },
-  {
-    "name": "AprilTag Demo",
-    "command": "bash ~/Zenith_ws/src/zenith_apriltag_demo/scripts/start_demo_lingkong1.sh tmux",
-    "target": "Send To Current UAV",
-    "note": "前摄搜tag→下摄精降双摄精降demo (Zenith COMMAND_CONTROL 触发)",
-    "category": "Demo"
-  },
-  {
-    "name": "八字轨迹",
-    "command": "rosrun zenith_communication_bridge zenith_run_task.py 八字轨迹 roslaunch zenith_demo figure8_trajectory_control.launch",
-    "target": "Send To Current UAV",
-    "note": "figure8_trajectory_control；终端输出实时回传；停止用 rosnode kill /figure8_trajectory_control",
-    "category": "Mission"
-  },
-  {
     "name": "圆形轨迹",
-    "command": "rosrun zenith_communication_bridge zenith_run_task.py 圆形轨迹 roslaunch zenith_demo circular_trajectory_control.launch",
-    "target": "Send To Current UAV",
-    "note": "circular_trajectory_control；终端输出实时回传；停止用 rosnode kill /circular_trajectory_control",
-    "category": "Mission"
+    "task_id": "circular_trajectory",
+    "note": "启动圆形轨迹任务；停止时原地悬停并退出 COMMAND_CONTROL",
+    "category": "轨迹"
   },
   {
-    "name": "停止八字",
-    "command": "rosnode kill /figure8_trajectory_control",
-    "target": "Send To Current UAV",
-    "note": "结束八字轨迹任务",
-    "category": "Mission"
+    "name": "8 字轨迹",
+    "task_id": "figure8_trajectory",
+    "note": "启动 8 字轨迹任务；停止时原地悬停并退出 COMMAND_CONTROL",
+    "category": "轨迹"
   },
   {
-    "name": "停止圆形",
-    "command": "rosnode kill /circular_trajectory_control",
-    "target": "Send To Current UAV",
-    "note": "结束圆形轨迹任务",
-    "category": "Mission"
+    "name": "最近人员偏航跟踪",
+    "task_id": "zenith_tracking_unified",
+    "note": "Odin 未畸变 RGB + 对齐深度自动选择物理距离最近人员；仅原地偏航",
+    "category": "跟踪"
+  },
+  {
+    "name": "C10 AprilTag 精准降落",
+    "task_id": "c10_apriltag_landing",
+    "note": "快速启动 zenith_apriltag/c10_ground_landing_demo；降落由独立 FSM 管理",
+    "category": "降落"
   }
 ]

@@ -6,7 +6,7 @@ The current prototype includes:
 
 - `Overview`: status header, live video panel, quick actions, manual command area
 - `Map / Track`: mission map canvas, track view, waypoint list, mission actions
-- `Scripts`: script workbench and script management panel
+- `Scripts`: allow-listed aircraft task cards with start/stop ACK and lifecycle status
 
 ## Structure
 
@@ -21,7 +21,7 @@ The current prototype includes:
   - `pages/`: main views
   - `components/`: reusable UI building blocks
 - `config/`
-  - `script_actions.json`: example script action configuration
+  - `script_actions.json`: display metadata and stable IDs for aircraft-managed tasks
   - `zenith_protocol.json`: transport and topic defaults extracted from the Zenith project
 - `docs/`
   - `zenith_adaptation.md`: comparison and adaptation notes

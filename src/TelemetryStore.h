@@ -66,6 +66,12 @@ public:
     QString currentTime() const;
     QString lastCommand() const;
     QString commandAck() const;
+    QString managedTaskName() const;
+    QString managedTaskState() const;
+    QString managedTaskReason() const;
+    QString managedTaskAck() const;
+    QString managedTaskRequestId() const;
+    bool managedTaskActive() const;
     QList<QPointF> pathPoints() const;
     QList<QPointF> waypointPoints() const;
     QString currentVehicleTopicRoot() const;
@@ -174,6 +180,12 @@ private:
     QString m_currentTime;
     QString m_lastCommand;
     QString m_commandAck;
+    QString m_managedTaskName;
+    QString m_managedTaskState = "UNKNOWN";
+    QString m_managedTaskReason = "尚未收到机载任务管理器状态";
+    QString m_managedTaskAck;
+    QString m_managedTaskRequestId;
+    bool m_managedTaskActive = false;
     bool m_armed = false;
     bool m_connected = false;
     bool m_failsafe = false;
