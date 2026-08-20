@@ -13,6 +13,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkProxy>
+#include <QSettings>
 
 #include <algorithm>
 
@@ -64,6 +65,9 @@ ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
     connect(&m_linkMonitorTimer, &QTimer::timeout, this, &ZenithProtocolClient::updateLinkStates);
     m_linkMonitorTimer.setInterval(kLinkMonitorIntervalMs);
 
+    connect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
+    connect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
+
     // ModeSelection ACK timeout
     m_modeSelectionAckTimer.setSingleShot(true);
     connect(&m_modeSelectionAckTimer, &QTimer::timeout, this, [this]() {
@@ -98,7 +102,9 @@ QString ZenithProtocolClient::protocolLogText() const { return m_protocolLogText
 bool ZenithProtocolClient::isConnected() const
 {
     if (m_transportMode == TransportMode::Serial) {
-        return m_serialPort.isOpen();
+        // An open COM handle is not a usable aircraft link. After every open or
+        // reopen, wait for a new CRC-valid frame before exposing "connected".
+        return m_serialPort.isOpen() && m_serialHasValidFrameSinceOpen && telemetryFresh();
     }
     return m_tcpSocket.state() == QAbstractSocket::ConnectedState;
 }
@@ -148,6 +154,9 @@ void ZenithProtocolClient::setRobotId(int robotId) { m_robotId = qMax(1, robotId
 // ---------------------------------------------------------------------------
 void ZenithProtocolClient::start()
 {
+    if (m_active) {
+        return;
+    }
     m_active = true;
     m_hasEverConnected = false;
     resetFreshness();
@@ -158,6 +167,21 @@ void ZenithProtocolClient::start()
     m_linkMonitorTimer.start();
 
     if (m_transportMode == TransportMode::Serial) {
+        m_serialReconnectCount = 0;
+        m_serialReconnectBackoffStep = 0;
+        m_serialHadValidFrame = false;
+        m_serialHasValidFrameSinceOpen = false;
+        m_serialDataInterrupted = false;
+        m_lastSerialValidFrameMs = 0;
+        m_lastSerialDisplayFrameMs = 0;
+        m_serialOpenedAtMs = 0;
+        m_serialRxBytes = 0;
+        m_serialTxBytes = 0;
+        m_serialRateSampleRxBytes = 0;
+        m_serialRateSampleTxBytes = 0;
+        m_serialRxBytesPerSecond = 0;
+        m_serialTxBytesPerSecond = 0;
+        m_serialRateSampleMs = nowMs();
         startSerial();
     } else {
         startNetwork();
@@ -199,6 +223,7 @@ void ZenithProtocolClient::stop()
     m_heartbeatTimer.stop();
     m_linkMonitorTimer.stop();
     m_modeSelectionAckTimer.stop();
+    m_reconnectTimer.stop();
     m_awaitingModeSelectionAck = false;
 
     if (m_transportMode == TransportMode::Serial) {
@@ -323,7 +348,13 @@ void ZenithProtocolClient::onTcpError(QAbstractSocket::SocketError error)
 
 void ZenithProtocolClient::onReconnectTimer()
 {
-    if (m_active && !m_tcpIntentionalDisconnect) {
+    if (!m_active) {
+        return;
+    }
+    if (m_transportMode == TransportMode::Serial) {
+        ++m_serialReconnectCount;
+        openSerial(true);
+    } else if (!m_tcpIntentionalDisconnect) {
         connectTcp();
     }
 }
@@ -341,7 +372,7 @@ void ZenithProtocolClient::onHeartbeatTimer()
         payload.insert("count", static_cast<int>(m_heartbeatCount++));
         payload.insert("message", QString());
         const QByteArray frame = packFrame(ZenithProtocol::HEARTBEAT, m_robotId, payload);
-        m_serialPort.write(frame);
+        writeSerial(frame);
         return;
     }
 
@@ -369,7 +400,7 @@ void ZenithProtocolClient::sendTcpMessage(int msgId, const QVariantMap &payload,
             return;
         }
         const QByteArray packet = packFrame(msgId, robotId, payload);
-        m_serialPort.write(packet);
+        writeSerial(packet);
         appendLog(QString("Serial send msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
         return;
     }
@@ -403,7 +434,7 @@ void ZenithProtocolClient::sendUdpMessage(int msgId, const QVariantMap &payload,
             return;
         }
         const QByteArray packet = packFrame(msgId, robotId, payload);
-        m_serialPort.write(packet);
+        writeSerial(packet);
         appendLog(QString("Serial send msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
         return;
     }
@@ -571,8 +602,25 @@ void ZenithProtocolClient::updateLinkStates()
     const qint64 now = nowMs();
 
     if (m_transportMode == TransportMode::Serial) {
+        updateSerialRates(now);
+
+        const bool validDataTimedOut = m_serialHasValidFrameSinceOpen
+            && m_lastSerialValidFrameMs > 0
+            && (now - m_lastSerialValidFrameMs) > kSerialStaleReconnectMs;
+        const bool firstFrameAfterReconnectTimedOut = m_serialDataInterrupted
+            && !m_serialHasValidFrameSinceOpen
+            && m_serialOpenedAtMs > 0
+            && (now - m_serialOpenedAtMs) > kSerialStaleReconnectMs;
+        if (m_active && m_serialPort.isOpen()
+            && (validDataTimedOut || firstFrameAfterReconnectTimedOut)) {
+            m_serialDataInterrupted = true;
+            scheduleSerialReconnect(validDataTimedOut
+                ? QStringLiteral("valid data timeout")
+                : QStringLiteral("no valid frame after reconnect"));
+        }
+
         // Serial mode: single channel, simplified state reporting
-        const qint64 lastRx = std::max({m_lastUdpRxMs, m_lastTcpRxMs, m_lastHeartbeatRxMs});
+        const qint64 lastRx = m_lastSerialValidFrameMs;
         const bool portOpen = m_serialPort.isOpen();
         const bool fresh = lastRx > 0 && (now - lastRx) <= kUdpFreshnessTimeoutMs;
 
@@ -692,13 +740,14 @@ void ZenithProtocolClient::updateLinkStates()
 // ---------------------------------------------------------------------------
 // Frame processing
 // ---------------------------------------------------------------------------
-void ZenithProtocolClient::processBuffer(QByteArray &buffer)
+int ZenithProtocolClient::processBuffer(QByteArray &buffer)
 {
+    int validFrames = 0;
     // Guard: if buffer grows beyond 16KB, discard stale data (radio corruption recovery)
     if (buffer.size() > 16384) {
         appendLog(QString("Buffer overflow (%1 bytes), flushing").arg(buffer.size()));
         buffer.clear();
-        return;
+        return 0;
     }
 
     while (!buffer.isEmpty()) {
@@ -714,9 +763,11 @@ void ZenithProtocolClient::processBuffer(QByteArray &buffer)
         if (decoded.msgId == ZenithProtocol::HEARTBEAT) {
             noteHeartbeatRx();
         }
+        ++validFrames;
         emit decodedMessage(decoded.msgId, decoded.robotId, decoded.payload);
         buffer.remove(0, decoded.totalBytes);
     }
+    return validFrames;
 }
 
 void ZenithProtocolClient::processFrame(const QByteArray &frame)
@@ -762,6 +813,7 @@ void ZenithProtocolClient::resetFreshness()
     m_lastUdpRxMs = 0;
     m_lastHeartbeatRxMs = 0;
     m_lastTcpRxMs = 0;
+    m_lastSerialValidFrameMs = 0;
 }
 
 void ZenithProtocolClient::noteUdpRx()
@@ -789,57 +841,283 @@ qint64 ZenithProtocolClient::nowMs() const
 // ---------------------------------------------------------------------------
 void ZenithProtocolClient::startSerial()
 {
-    if (m_serialPortName.isEmpty()) {
-        appendLog("Serial start failed: no port name configured");
+    openSerial(false);
+}
+
+void ZenithProtocolClient::stopSerial()
+{
+    m_reconnectTimer.stop();
+    m_serialClosing = true;
+    if (m_serialPort.isOpen()) {
+        m_serialPort.close();
+    }
+    m_serialClosing = false;
+    m_serialRecvBuffer.clear();
+    m_serialActualPortName.clear();
+    m_serialHasValidFrameSinceOpen = false;
+    m_serialDataInterrupted = false;
+    m_serialOpenedAtMs = 0;
+}
+
+void ZenithProtocolClient::openSerial(bool reconnectAttempt)
+{
+    if (!m_active || m_transportMode != TransportMode::Serial || m_serialOpening) {
         return;
     }
 
-    m_serialPort.setPortName(m_serialPortName);
+    bool ambiguous = false;
+    const QString portName = resolveSerialPort(&ambiguous);
+    if (portName.isEmpty()) {
+        scheduleSerialReconnect(ambiguous
+            ? QStringLiteral("multiple matching serial devices; select a port manually")
+            : QStringLiteral("preferred serial device not found"));
+        return;
+    }
+
+    m_serialOpening = true;
+    m_serialRecvBuffer.clear();
+    resetFreshness();
+    m_serialHasValidFrameSinceOpen = false;
+    m_serialActualPortName = portName;
+    m_serialOpenedAtMs = 0;
+
+    m_serialPort.setPortName(portName);
     m_serialPort.setBaudRate(m_serialBaudRate);
     m_serialPort.setDataBits(QSerialPort::Data8);
     m_serialPort.setParity(QSerialPort::NoParity);
     m_serialPort.setStopBits(QSerialPort::OneStop);
     m_serialPort.setFlowControl(QSerialPort::NoFlowControl);
 
-    connect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
-    connect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
-
     if (m_serialPort.open(QIODevice::ReadWrite)) {
-        m_serialRecvBuffer.clear();
-        appendLog(QString("Serial port opened: %1 @ %2").arg(m_serialPortName).arg(m_serialBaudRate));
+        const QSerialPortInfo info(portName);
+        if (!info.isNull()) {
+            captureSerialIdentity(info);
+            rememberSerialIdentity(m_serialPortName.isEmpty() ? portName : m_serialPortName, info);
+            rememberSerialIdentity(portName, info);
+        }
+        m_serialOpening = false;
+        m_serialOpenedAtMs = nowMs();
+        appendLog(QString("Serial port opened: %1 @ %2%3")
+            .arg(portName)
+            .arg(m_serialBaudRate)
+            .arg(reconnectAttempt ? QStringLiteral(" (reconnected, waiting for fresh data)") : QString()));
 
         m_pendingModeSelection = true;
         m_awaitingModeSelectionAck = true;
         m_modeSelectionRetries = 0;
         sendModeSelection(true);
         m_modeSelectionAckTimer.start(kModeSelectionAckTimeoutMs);
-    } else {
-        appendLog(QString("Serial open failed: %1").arg(m_serialPort.errorString()));
+        emit serialPortNameChanged();
+        emit linkStatesChanged();
+        return;
     }
+
+    const QString error = m_serialPort.errorString();
+    m_serialOpening = false;
+    scheduleSerialReconnect(QString("open %1 failed: %2").arg(portName, error));
 }
 
-void ZenithProtocolClient::stopSerial()
+void ZenithProtocolClient::scheduleSerialReconnect(const QString &reason)
 {
-    disconnect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
-    disconnect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
+    if (!m_active || m_transportMode != TransportMode::Serial) {
+        return;
+    }
 
+    m_modeSelectionAckTimer.stop();
+    m_awaitingModeSelectionAck = false;
+    m_serialClosing = true;
     if (m_serialPort.isOpen()) {
         m_serialPort.close();
     }
+    m_serialClosing = false;
     m_serialRecvBuffer.clear();
+    resetFreshness();
+    m_serialHasValidFrameSinceOpen = false;
+    m_serialOpenedAtMs = 0;
+
+    if (!m_reconnectTimer.isActive()) {
+        const int delayMs = qMin(1000 * (m_serialReconnectBackoffStep + 1), 3000);
+        m_serialReconnectBackoffStep = qMin(m_serialReconnectBackoffStep + 1, 2);
+        appendLog(QString("Serial reconnect in %1 ms: %2").arg(delayMs).arg(reason));
+        m_reconnectTimer.start(delayMs);
+    }
+    emit linkStatesChanged();
+}
+
+QString ZenithProtocolClient::resolveSerialPort(bool *ambiguous) const
+{
+    if (ambiguous) {
+        *ambiguous = false;
+    }
+    const auto infos = QSerialPortInfo::availablePorts();
+    QList<QSerialPortInfo> matches;
+
+    const bool hasIdentity = m_hasSerialVendorId || m_hasSerialProductId || !m_serialNumber.isEmpty();
+    if (hasIdentity) {
+        for (const QSerialPortInfo &info : infos) {
+            if (m_hasSerialVendorId && (!info.hasVendorIdentifier() || info.vendorIdentifier() != m_serialVendorId)) continue;
+            if (m_hasSerialProductId && (!info.hasProductIdentifier() || info.productIdentifier() != m_serialProductId)) continue;
+            if (!m_serialNumber.isEmpty() && info.serialNumber() != m_serialNumber) continue;
+            matches.append(info);
+        }
+        if (matches.size() == 1) {
+            return matches.first().portName();
+        }
+        if (matches.size() > 1) {
+            for (const QSerialPortInfo &info : matches) {
+                if (info.portName() == m_serialPortName) {
+                    return info.portName();
+                }
+            }
+            if (ambiguous) *ambiguous = true;
+        }
+        return QString();
+    }
+
+    for (const QSerialPortInfo &info : infos) {
+        if (info.portName() == m_serialPortName) {
+            return info.portName();
+        }
+    }
+
+    // First-run convenience: auto-select only when no named profile port is configured.
+    // A missing profile must not inherit an unrelated attached CP210x.
+    if (!m_serialPortName.isEmpty()) {
+        return QString();
+    }
+    for (const QSerialPortInfo &info : infos) {
+        if (info.hasVendorIdentifier() && info.hasProductIdentifier()
+            && info.vendorIdentifier() == 0x10C4 && info.productIdentifier() == 0xEA60) {
+            matches.append(info);
+        }
+    }
+    if (matches.size() == 1) {
+        return matches.first().portName();
+    }
+    if (matches.size() > 1 && ambiguous) {
+        *ambiguous = true;
+    }
+    return QString();
+}
+
+void ZenithProtocolClient::captureSerialIdentity(const QSerialPortInfo &info)
+{
+    m_serialDeviceDescription = info.description();
+    m_serialNumber = info.serialNumber();
+    m_hasSerialVendorId = info.hasVendorIdentifier();
+    m_hasSerialProductId = info.hasProductIdentifier();
+    if (m_hasSerialVendorId) m_serialVendorId = info.vendorIdentifier();
+    if (m_hasSerialProductId) m_serialProductId = info.productIdentifier();
+}
+
+void ZenithProtocolClient::clearSerialIdentity()
+{
+    m_serialDeviceDescription.clear();
+    m_serialNumber.clear();
+    m_serialVendorId = 0;
+    m_serialProductId = 0;
+    m_hasSerialVendorId = false;
+    m_hasSerialProductId = false;
+}
+
+void ZenithProtocolClient::rememberSerialIdentity(const QString &portName, const QSerialPortInfo &info)
+{
+    if (portName.isEmpty()) {
+        return;
+    }
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("serialDevices/%1").arg(portName));
+    settings.setValue(QStringLiteral("description"), info.description());
+    settings.setValue(QStringLiteral("serialNumber"), info.serialNumber());
+    settings.setValue(QStringLiteral("hasVendorId"), info.hasVendorIdentifier());
+    settings.setValue(QStringLiteral("hasProductId"), info.hasProductIdentifier());
+    if (info.hasVendorIdentifier()) settings.setValue(QStringLiteral("vendorId"), info.vendorIdentifier());
+    else settings.remove(QStringLiteral("vendorId"));
+    if (info.hasProductIdentifier()) settings.setValue(QStringLiteral("productId"), info.productIdentifier());
+    else settings.remove(QStringLiteral("productId"));
+    settings.endGroup();
+}
+
+bool ZenithProtocolClient::restoreSerialIdentity(const QString &portName)
+{
+    if (portName.isEmpty()) {
+        clearSerialIdentity();
+        return false;
+    }
+
+    QSettings settings;
+    settings.beginGroup(QStringLiteral("serialDevices/%1").arg(portName));
+    const bool hasVendor = settings.value(QStringLiteral("hasVendorId"), false).toBool();
+    const bool hasProduct = settings.value(QStringLiteral("hasProductId"), false).toBool();
+    const QString serial = settings.value(QStringLiteral("serialNumber")).toString();
+    if (!hasVendor && !hasProduct && serial.isEmpty()) {
+        settings.endGroup();
+        clearSerialIdentity();
+        return false;
+    }
+
+    m_serialDeviceDescription = settings.value(QStringLiteral("description")).toString();
+    m_serialNumber = serial;
+    m_hasSerialVendorId = hasVendor;
+    m_hasSerialProductId = hasProduct;
+    m_serialVendorId = static_cast<quint16>(settings.value(QStringLiteral("vendorId"), 0).toUInt());
+    m_serialProductId = static_cast<quint16>(settings.value(QStringLiteral("productId"), 0).toUInt());
+    settings.endGroup();
+    return true;
+}
+
+QSerialPortInfo ZenithProtocolClient::currentSerialPortInfo() const
+{
+    const QString actual = !m_serialActualPortName.isEmpty() ? m_serialActualPortName : resolveSerialPort();
+    return actual.isEmpty() ? QSerialPortInfo() : QSerialPortInfo(actual);
+}
+
+qint64 ZenithProtocolClient::writeSerial(const QByteArray &data)
+{
+    const qint64 written = m_serialPort.write(data);
+    if (written > 0) {
+        m_serialTxBytes += static_cast<quint64>(written);
+    }
+    return written;
+}
+
+void ZenithProtocolClient::updateSerialRates(qint64 now)
+{
+    if (m_serialRateSampleMs <= 0) {
+        m_serialRateSampleMs = now;
+        return;
+    }
+    const qint64 elapsed = now - m_serialRateSampleMs;
+    if (elapsed < 500) {
+        return;
+    }
+    m_serialRxBytesPerSecond = static_cast<qint64>((m_serialRxBytes - m_serialRateSampleRxBytes) * 1000 / elapsed);
+    m_serialTxBytesPerSecond = static_cast<qint64>((m_serialTxBytes - m_serialRateSampleTxBytes) * 1000 / elapsed);
+    m_serialRateSampleRxBytes = m_serialRxBytes;
+    m_serialRateSampleTxBytes = m_serialTxBytes;
+    m_serialRateSampleMs = now;
 }
 
 void ZenithProtocolClient::onSerialReadyRead()
 {
-    m_serialRecvBuffer.append(m_serialPort.readAll());
+    const QByteArray bytes = m_serialPort.readAll();
+    m_serialRxBytes += static_cast<quint64>(bytes.size());
+    m_serialRecvBuffer.append(bytes);
 
-    // Update ALL freshness timestamps since serial is a single multiplexed channel
-    const qint64 now = nowMs();
-    m_lastTcpRxMs = now;
-    m_lastUdpRxMs = now;
-    m_lastHeartbeatRxMs = now;
-
-    processBuffer(m_serialRecvBuffer);
+    // Only CRC-valid decoded frames make a newly opened/reopened link ready.
+    if (processBuffer(m_serialRecvBuffer) > 0) {
+        const qint64 now = nowMs();
+        m_lastTcpRxMs = now;
+        m_lastUdpRxMs = now;
+        m_lastHeartbeatRxMs = now;
+        m_lastSerialValidFrameMs = now;
+        m_lastSerialDisplayFrameMs = now;
+        m_serialHadValidFrame = true;
+        m_serialHasValidFrameSinceOpen = true;
+        m_serialDataInterrupted = false;
+        m_serialReconnectBackoffStep = 0;
+        emit linkStatesChanged();
+    }
 }
 
 void ZenithProtocolClient::onSerialError(QSerialPort::SerialPortError error)
@@ -847,8 +1125,14 @@ void ZenithProtocolClient::onSerialError(QSerialPort::SerialPortError error)
     if (error == QSerialPort::NoError) {
         return;
     }
+    if (m_serialClosing || m_serialOpening || !m_active) {
+        return;
+    }
     appendLog(QString("Serial error: %1").arg(m_serialPort.errorString()));
-    updateLinkStates();
+    if (error != QSerialPort::TimeoutError) {
+        m_serialDataInterrupted = m_serialHadValidFrame;
+        scheduleSerialReconnect(m_serialPort.errorString());
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -857,6 +1141,11 @@ void ZenithProtocolClient::onSerialError(QSerialPort::SerialPortError error)
 int ZenithProtocolClient::transportMode() const
 {
     return static_cast<int>(m_transportMode);
+}
+
+bool ZenithProtocolClient::active() const
+{
+    return m_active;
 }
 
 void ZenithProtocolClient::setTransportMode(int mode)
@@ -875,9 +1164,24 @@ QString ZenithProtocolClient::serialPortName() const
 
 void ZenithProtocolClient::setSerialPortName(const QString &name)
 {
-    if (m_serialPortName != name) {
+    const bool changed = m_serialPortName != name;
+    if (changed) {
         m_serialPortName = name;
+    }
+
+    const QSerialPortInfo info(name);
+    if (!info.isNull()) {
+        captureSerialIdentity(info);
+        rememberSerialIdentity(name, info);
+    } else if (changed) {
+        // Never carry device A's identity into a newly selected but currently
+        // absent profile B. Restore B's identity, or clear it completely.
+        restoreSerialIdentity(name);
+    }
+
+    if (changed) {
         emit serialPortNameChanged();
+        emit linkStatesChanged();
     }
 }
 
@@ -904,7 +1208,64 @@ QStringList ZenithProtocolClient::availableSerialPorts() const
     return ports;
 }
 
+QString ZenithProtocolClient::serialConnectionState() const
+{
+    bool ambiguous = false;
+    const bool detected = !resolveSerialPort(&ambiguous).isEmpty();
+    if (!m_active) return detected ? QStringLiteral("DETECTED") : QStringLiteral("NOT_DETECTED");
+    if (m_serialPort.isOpen() && m_serialHasValidFrameSinceOpen && telemetryFresh()) return QStringLiteral("COMMUNICATING");
+    if (m_serialPort.isOpen()) return QStringLiteral("WAITING_DATA");
+    if (m_serialHadValidFrame || m_serialDataInterrupted) return QStringLiteral("RECONNECTING");
+    if (m_serialOpening || detected) return QStringLiteral("CONNECTING");
+    return QStringLiteral("NOT_DETECTED");
+}
+
+QString ZenithProtocolClient::serialConnectionStateText() const
+{
+    const QString state = serialConnectionState();
+    if (state == QLatin1String("DETECTED")) return QStringLiteral("已检测、未连接");
+    if (state == QLatin1String("CONNECTING")) return QStringLiteral("正在连接");
+    if (state == QLatin1String("WAITING_DATA")) return QStringLiteral("串口已打开、等待飞机数据");
+    if (state == QLatin1String("COMMUNICATING")) return QStringLiteral("通信正常");
+    if (state == QLatin1String("RECONNECTING")) return QStringLiteral("数据中断、自动重连中");
+    return QStringLiteral("未检测到设备");
+}
+
+QString ZenithProtocolClient::serialDeviceName() const
+{
+    const QSerialPortInfo info = currentSerialPortInfo();
+    const QString description = !info.isNull() ? info.description() : m_serialDeviceDescription;
+    return description.isEmpty() ? QStringLiteral("CP210x 串口数传") : description;
+}
+
+QString ZenithProtocolClient::serialDeviceIdentity() const
+{
+    QStringList parts;
+    if (!m_serialNumber.isEmpty()) parts << QStringLiteral("S/N %1").arg(m_serialNumber);
+    if (m_hasSerialVendorId) parts << QStringLiteral("VID %1").arg(m_serialVendorId, 4, 16, QLatin1Char('0')).toUpper();
+    if (m_hasSerialProductId) parts << QStringLiteral("PID %1").arg(m_serialProductId, 4, 16, QLatin1Char('0')).toUpper();
+    return parts.isEmpty() ? QStringLiteral("身份待识别") : parts.join(QStringLiteral("  ·  "));
+}
+
+QString ZenithProtocolClient::serialActualPortName() const
+{
+    return m_serialActualPortName.isEmpty() ? m_serialPortName : m_serialActualPortName;
+}
+
+QString ZenithProtocolClient::serialLastDataAgeText() const
+{
+    if (m_lastSerialDisplayFrameMs <= 0) return QStringLiteral("—");
+    return QString::number((nowMs() - m_lastSerialDisplayFrameMs) / 1000.0, 'f', 1) + QStringLiteral(" 秒");
+}
+
+qint64 ZenithProtocolClient::serialRxBytesPerSecond() const { return m_serialRxBytesPerSecond; }
+qint64 ZenithProtocolClient::serialTxBytesPerSecond() const { return m_serialTxBytesPerSecond; }
+qulonglong ZenithProtocolClient::serialRxBytes() const { return m_serialRxBytes; }
+qulonglong ZenithProtocolClient::serialTxBytes() const { return m_serialTxBytes; }
+int ZenithProtocolClient::serialReconnectCount() const { return m_serialReconnectCount; }
+
 void ZenithProtocolClient::refreshSerialPorts()
 {
     emit availableSerialPortsChanged();
+    emit linkStatesChanged();
 }

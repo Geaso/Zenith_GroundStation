@@ -20,6 +20,13 @@ ApplicationWindow {
         return (s.charAt(0) === '-' && parseFloat(s) === 0) ? s.substring(1) : s
     }
 
+    function fmtBytes(value) {
+        var n = Number(value)
+        if (n >= 1048576) return (n / 1048576).toFixed(1) + " MB"
+        if (n >= 1024) return (n / 1024).toFixed(1) + " KB"
+        return n.toFixed(0) + " B"
+    }
+
     function updateProfileNames() {
         var profiles = appState.connectionProfiles()
         var names = []
@@ -82,7 +89,7 @@ ApplicationWindow {
                     Text {
                         id: connAddr; anchors.centerIn: parent
                         text: appState.protocolClient.transportMode === 1
-                              ? appState.protocolClient.serialPortName + " @ " + appState.protocolClient.serialBaudRate
+                              ? (appState.protocolClient.serialActualPortName || "未选择串口") + " @ " + appState.protocolClient.serialBaudRate
                               : appState.remoteHostIp + ":" + appState.tcpPort
                         color: "#8B949E"; font.pixelSize: 11; font.family: "Consolas"
                     }
@@ -91,16 +98,16 @@ ApplicationWindow {
                 // Connect / Disconnect button
                 Rectangle {
                     width: connBtnLabel.width + 24; height: 26; radius: 5
-                    color: appState.protocolConnected ? "#6E1A1A" : "#1A6334"
+                    color: appState.protocolClient.active ? "#6E1A1A" : "#1A6334"
                     anchors.verticalCenter: parent.verticalCenter
                     Text {
                         id: connBtnLabel; anchors.centerIn: parent
-                        text: appState.protocolConnected ? "Disconnect" : "Connect"
+                        text: appState.protocolClient.active ? "Disconnect" : "Connect"
                         color: "#FFFFFF"; font.pixelSize: 11; font.bold: true
                     }
                     MouseArea {
                         anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: appState.protocolConnected ? appState.disconnectProtocol() : appState.connectProtocol()
+                        onClicked: appState.protocolClient.active ? appState.disconnectProtocol() : appState.connectProtocol()
                     }
                 }
 
@@ -108,6 +115,7 @@ ApplicationWindow {
                 ComboBox {
                     id: vehicleCombo; width: Math.max(80, contentItem.implicitWidth + 28); height: 24
                     anchors.verticalCenter: parent.verticalCenter
+                    enabled: !appState.protocolClient.active
                     model: savedProfileNames; currentIndex: 0
                     onActivated: {
                         var name = currentText
@@ -178,7 +186,7 @@ ApplicationWindow {
                 // Status dots: Connection / GPS / Battery
                 Row {
                     anchors.verticalCenter: parent.verticalCenter; spacing: 10
-                    StatusDot { dotColor: appState.protocolConnected ? "#3FB950" : "#F85149"; label: "Link" }
+                    StatusDot { dotColor: appState.protocolConnected ? "#3FB950" : (appState.protocolClient.active ? "#D29922" : "#F85149"); label: "Link" }
                     StatusDot { dotColor: appState.connected && appState.gpsStatus.indexOf("3D") >= 0 ? "#3FB950" : appState.connected && appState.gpsStatus.indexOf("2D") >= 0 ? "#FFA657" : "#F85149"; label: "GPS" }
                     StatusDot { dotColor: !appState.connected ? "#484F58" : appState.batteryPercent < 0.2 ? "#F85149" : appState.batteryPercent < 0.4 ? "#FFA657" : "#3FB950"; label: "Bat" }
                 }
@@ -324,7 +332,7 @@ ApplicationWindow {
         id: connectionDialog
         modal: true
         width: 680
-        height: 660
+        height: selectedTransportMode === 1 && serialAdvancedExpanded ? 760 : 680
         x: (window.width - width) / 2
         y: (window.height - height) / 2
         padding: 0
@@ -332,12 +340,39 @@ ApplicationWindow {
 
         property var savedProfiles: []
         property int selectedTransportMode: 0  // 0=TCP, 1=Serial
+        property bool serialAdvancedExpanded: false
+        property bool serialPortManuallySelected: false
+        property string serialPendingPortName: ""
 
         function refreshProfiles() { savedProfiles = appState.connectionProfiles() }
+        function syncSerialControls() {
+            var ports = appState.protocolClient.availableSerialPorts
+            var portIndex = ports.indexOf(appState.protocolClient.serialPortName)
+            if (portIndex >= 0) serialPortCombo.currentIndex = portIndex
+            var rates = [9600, 19200, 38400, 57600, 115200, 460800, 921600]
+            var rateIndex = rates.indexOf(appState.protocolClient.serialBaudRate)
+            if (rateIndex >= 0) baudRateCombo.currentIndex = rateIndex
+        }
+        function serialPortForApply() {
+            if (serialPendingPortName.length > 0)
+                return serialPendingPortName
+            if (serialPortManuallySelected && serialPortCombo.currentText.length > 0)
+                return serialPortCombo.currentText
+            if (appState.protocolClient.serialPortName.length > 0)
+                return appState.protocolClient.serialPortName
+            return serialPortCombo.currentText
+        }
 
         Component.onCompleted: {
             refreshProfiles()
             appState.protocolClient.refreshSerialPorts()
+            Qt.callLater(syncSerialControls)
+        }
+        onOpened: {
+            selectedTransportMode = appState.protocolClient.transportMode
+            serialPortManuallySelected = false
+            serialPendingPortName = ""
+            syncSerialControls()
         }
         Connections {
             target: appState
@@ -404,7 +439,9 @@ ApplicationWindow {
                                                 for (var i = 0; i < ports.length; i++) {
                                                     if (ports[i] === modelData.portName) { idx = i; break }
                                                 }
-                                                if (idx >= 0) serialPortCombo.currentIndex = idx
+                                                 if (idx >= 0) serialPortCombo.currentIndex = idx
+                                                 connectionDialog.serialPortManuallySelected = false
+                                                 connectionDialog.serialPendingPortName = modelData.portName
                                                 // Set baud rate ComboBox to matching rate
                                                 var bauds = [9600, 19200, 38400, 57600, 115200, 460800, 921600]
                                                 for (var j = 0; j < bauds.length; j++) {
@@ -471,6 +508,7 @@ ApplicationWindow {
                             }
                             MouseArea {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                enabled: !appState.protocolClient.active
                                 onClicked: connectionDialog.selectedTransportMode = 0
                             }
                         }
@@ -486,6 +524,7 @@ ApplicationWindow {
                             }
                             MouseArea {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                enabled: !appState.protocolClient.active
                                 onClicked: {
                                     connectionDialog.selectedTransportMode = 1
                                     appState.protocolClient.refreshSerialPorts()
@@ -562,80 +601,86 @@ ApplicationWindow {
                 // ── Serial Connection fields ──
                 Rectangle {
                     visible: connectionDialog.selectedTransportMode === 1
-                    width: parent.width; height: 54; radius: 8; color: "#21262D"; border.color: "#30363D"
-                    Row {
-                        anchors.fill: parent; anchors.margins: 10; spacing: 8
-                        Column {
-                            spacing: 3
-                            Text { text: "串口"; color: "#8B949E"; font.pixelSize: 10 }
-                            Row {
-                                spacing: 6
-                                ComboBox {
-                                    id: serialPortCombo; width: 160; height: 28
-                                    model: appState.protocolClient.availableSerialPorts
-                                    background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
-                                    contentItem: Text {
-                                        leftPadding: 8; text: serialPortCombo.currentText
-                                        color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter
-                                    }
-                                    popup: Popup {
-                                        y: serialPortCombo.height; width: serialPortCombo.width
-                                        implicitHeight: contentItem.implicitHeight + 2
-                                        padding: 1
-                                        contentItem: ListView {
-                                            clip: true
-                                            implicitHeight: contentHeight
-                                            model: serialPortCombo.popup.visible ? serialPortCombo.delegateModel : null
-                                            ScrollIndicator.vertical: ScrollIndicator { }
-                                        }
-                                        background: Rectangle { radius: 6; color: "#21262D"; border.color: "#30363D" }
-                                    }
-                                    delegate: ItemDelegate {
-                                        width: serialPortCombo.width; height: 28
-                                        contentItem: Text { text: modelData; color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
-                                        background: Rectangle { color: hovered ? "#30363D" : "transparent" }
-                                    }
+                    width: parent.width
+                    height: connectionDialog.serialAdvancedExpanded ? 220 : 142
+                    radius: 8; color: "#21262D"; border.color: "#30363D"
+
+                    Column {
+                        anchors.fill: parent; anchors.margins: 12; spacing: 9
+
+                        Row {
+                            width: parent.width; spacing: 9
+                            Rectangle {
+                                width: 11; height: 11; radius: 6; anchors.verticalCenter: parent.verticalCenter
+                                color: appState.protocolClient.serialConnectionState === "COMMUNICATING" ? "#3FB950"
+                                     : appState.protocolClient.serialConnectionState === "WAITING_DATA" || appState.protocolClient.serialConnectionState === "CONNECTING" ? "#D29922"
+                                     : appState.protocolClient.serialConnectionState === "RECONNECTING" ? "#F85149" : "#6E7681"
+                            }
+                            Column {
+                                width: 430; spacing: 2
+                                Text { text: appState.protocolClient.serialConnectionStateText; color: "#E6EDF3"; font.pixelSize: 14; font.bold: true }
+                                Text {
+                                    text: appState.protocolClient.serialDeviceName + "  ·  " + appState.protocolClient.serialDeviceIdentity
+                                    color: "#8B949E"; font.pixelSize: 10; width: parent.width; elide: Text.ElideRight
                                 }
-                                Rectangle {
-                                    width: 28; height: 28; radius: 6
-                                    color: refreshMA.containsMouse ? "#30363D" : "#0D1117"
-                                    border.color: "#30363D"
-                                    Text { anchors.centerIn: parent; text: "\u21BB"; color: "#8B949E"; font.pixelSize: 14 }
-                                    MouseArea {
-                                        id: refreshMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                        onClicked: appState.protocolClient.refreshSerialPorts()
+                            }
+                            Item { width: 1; height: 1 }
+                            Rectangle {
+                                width: 88; height: 26; radius: 5; color: advancedMA.containsMouse ? "#30363D" : "#161B22"; border.color: "#30363D"
+                                Text { anchors.centerIn: parent; text: connectionDialog.serialAdvancedExpanded ? "收起高级设置" : "高级设置 ▾"; color: "#8B949E"; font.pixelSize: 10 }
+                                MouseArea { id: advancedMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: connectionDialog.serialAdvancedExpanded = !connectionDialog.serialAdvancedExpanded }
+                            }
+                        }
+
+                        Row {
+                            spacing: 26
+                            Column { spacing: 2; Text { text: "实际端口"; color: "#6E7681"; font.pixelSize: 9 } Text { text: appState.protocolClient.serialActualPortName || "—"; color: "#E6EDF3"; font.pixelSize: 12; font.family: "Consolas" } }
+                            Column { spacing: 2; Text { text: "波特率"; color: "#6E7681"; font.pixelSize: 9 } Text { text: appState.protocolClient.serialBaudRate + "（推荐 921600）"; color: "#E6EDF3"; font.pixelSize: 12 } }
+                            Column { spacing: 2; Text { text: "最后有效数据"; color: "#6E7681"; font.pixelSize: 9 } Text { text: appState.protocolClient.serialLastDataAgeText; color: "#E6EDF3"; font.pixelSize: 12 } }
+                            Column { spacing: 2; Text { text: "自动重连"; color: "#6E7681"; font.pixelSize: 9 } Text { text: "开启 · " + appState.protocolClient.serialReconnectCount + " 次"; color: "#E6EDF3"; font.pixelSize: 12 } }
+                        }
+
+                        Text {
+                            text: "RX " + fmtBytes(appState.protocolClient.serialRxBytesPerSecond) + "/s（" + fmtBytes(appState.protocolClient.serialRxBytes) + "）"
+                                + "    TX " + fmtBytes(appState.protocolClient.serialTxBytesPerSecond) + "/s（" + fmtBytes(appState.protocolClient.serialTxBytes) + "）"
+                            color: "#58A6FF"; font.pixelSize: 10; font.family: "Consolas"
+                        }
+
+                        Row {
+                            visible: connectionDialog.serialAdvancedExpanded; spacing: 10
+                            Column {
+                                spacing: 3
+                                Text { text: "串口设备"; color: "#8B949E"; font.pixelSize: 10 }
+                                Row {
+                                    spacing: 6
+                                    ComboBox {
+                                        id: serialPortCombo; width: 210; height: 28
+                                        model: appState.protocolClient.availableSerialPorts
+                                        enabled: !appState.protocolClient.active
+                                        onActivated: {
+                                            connectionDialog.serialPortManuallySelected = true
+                                            connectionDialog.serialPendingPortName = currentText
+                                        }
+                                        background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+                                        contentItem: Text { leftPadding: 8; text: serialPortCombo.currentText; color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                    }
+                                    Rectangle {
+                                        width: 28; height: 28; radius: 6; color: refreshMA.containsMouse ? "#30363D" : "#0D1117"; border.color: "#30363D"
+                                        Text { anchors.centerIn: parent; text: "\u21BB"; color: "#8B949E"; font.pixelSize: 14 }
+                                        MouseArea { id: refreshMA; anchors.fill: parent; hoverEnabled: true; enabled: !appState.protocolClient.active; cursorShape: Qt.PointingHandCursor; onClicked: appState.protocolClient.refreshSerialPorts() }
                                     }
                                 }
                             }
-                        }
-                        Column {
-                            spacing: 3
-                            Text { text: "波特率"; color: "#8B949E"; font.pixelSize: 10 }
-                            ComboBox {
-                                id: baudRateCombo; width: 120; height: 28
-                                model: [9600, 19200, 38400, 57600, 115200, 460800, 921600]
-                                currentIndex: 6  // default 921600
-                                background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
-                                contentItem: Text {
-                                    leftPadding: 8; text: baudRateCombo.currentText
-                                    color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter
-                                }
-                                popup: Popup {
-                                    y: baudRateCombo.height; width: baudRateCombo.width
-                                    implicitHeight: contentItem.implicitHeight + 2
-                                    padding: 1
-                                    contentItem: ListView {
-                                        clip: true
-                                        implicitHeight: contentHeight
-                                        model: baudRateCombo.popup.visible ? baudRateCombo.delegateModel : null
-                                        ScrollIndicator.vertical: ScrollIndicator { }
-                                    }
-                                    background: Rectangle { radius: 6; color: "#21262D"; border.color: "#30363D" }
-                                }
-                                delegate: ItemDelegate {
-                                    width: baudRateCombo.width; height: 28
-                                    contentItem: Text { text: modelData; color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
-                                    background: Rectangle { color: hovered ? "#30363D" : "transparent" }
+                            Column {
+                                spacing: 3
+                                Text { text: "波特率"; color: "#8B949E"; font.pixelSize: 10 }
+                                ComboBox {
+                                    id: baudRateCombo; width: 140; height: 28
+                                    model: [9600, 19200, 38400, 57600, 115200, 460800, 921600]
+                                    enabled: !appState.protocolClient.active
+                                    currentIndex: 6
+                                    background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+                                    contentItem: Text { leftPadding: 8; text: baudRateCombo.currentText; color: "#E6EDF3"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
                                 }
                             }
                         }
@@ -650,16 +695,17 @@ ApplicationWindow {
                             var name = profileNameField.text.trim()
                             if (name.length === 0) name = appState.vehicleName
                             if (connectionDialog.selectedTransportMode === 1) {
-                                appState.saveSerialConnectionProfile(name, serialPortCombo.currentText, Number(baudRateCombo.currentText))
+                                appState.saveSerialConnectionProfile(name, connectionDialog.serialPortForApply(), Number(baudRateCombo.currentText))
                             } else {
                                 appState.saveConnectionProfile(name, hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
                             }
                         }
                     }
                     PrimaryButton { width: 100; text: "应用设置"; fillColor: "#21262D"; textColor: "#FFA657"
+                        enabled: !appState.protocolClient.active
                         onClicked: {
                             if (connectionDialog.selectedTransportMode === 1) {
-                                appState.applySerialSettings(serialPortCombo.currentText, Number(baudRateCombo.currentText))
+                                appState.applySerialSettings(connectionDialog.serialPortForApply(), Number(baudRateCombo.currentText))
                             } else {
                                 appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
                             }
@@ -670,9 +716,10 @@ ApplicationWindow {
                         onClicked: appState.testProtocol()
                     }
                     PrimaryButton { width: 100; text: "开始连接"; fillColor: "#1A6334"
+                        enabled: !appState.protocolClient.active
                         onClicked: {
                             if (connectionDialog.selectedTransportMode === 1) {
-                                appState.applySerialSettings(serialPortCombo.currentText, Number(baudRateCombo.currentText))
+                                appState.applySerialSettings(connectionDialog.serialPortForApply(), Number(baudRateCombo.currentText))
                             } else {
                                 appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
                             }
@@ -680,11 +727,13 @@ ApplicationWindow {
                         }
                     }
                     PrimaryButton { width: 100; text: "断开连接"; fillColor: "#6E1A1A"
+                        enabled: appState.protocolClient.active
                         onClicked: appState.disconnectProtocol() }
                 }
 
                 // ── Current status ──
                 Rectangle {
+                    visible: connectionDialog.selectedTransportMode === 0
                     width: parent.width; height: 70; radius: 8; color: "#21262D"; border.color: "#30363D"
                     Column {
                         anchors.fill: parent; anchors.margins: 12; spacing: 5
@@ -701,6 +750,7 @@ ApplicationWindow {
 
                 // ── Protocol log ──
                 Rectangle {
+                    visible: connectionDialog.selectedTransportMode === 0
                     width: parent.width; height: 160; radius: 8; color: "#0D1117"; border.color: "#30363D"
                     ScrollView {
                         anchors.fill: parent; anchors.margins: 8

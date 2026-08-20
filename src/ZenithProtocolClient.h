@@ -16,9 +16,21 @@ class ZenithProtocolClient : public QObject
     Q_OBJECT
 
     Q_PROPERTY(int transportMode READ transportMode WRITE setTransportMode NOTIFY transportModeChanged)
+    Q_PROPERTY(bool active READ active NOTIFY linkStatesChanged)
     Q_PROPERTY(QString serialPortName READ serialPortName WRITE setSerialPortName NOTIFY serialPortNameChanged)
     Q_PROPERTY(int serialBaudRate READ serialBaudRate WRITE setSerialBaudRate NOTIFY serialBaudRateChanged)
     Q_PROPERTY(QStringList availableSerialPorts READ availableSerialPorts NOTIFY availableSerialPortsChanged)
+    Q_PROPERTY(QString serialConnectionState READ serialConnectionState NOTIFY linkStatesChanged)
+    Q_PROPERTY(QString serialConnectionStateText READ serialConnectionStateText NOTIFY linkStatesChanged)
+    Q_PROPERTY(QString serialDeviceName READ serialDeviceName NOTIFY linkStatesChanged)
+    Q_PROPERTY(QString serialDeviceIdentity READ serialDeviceIdentity NOTIFY linkStatesChanged)
+    Q_PROPERTY(QString serialActualPortName READ serialActualPortName NOTIFY linkStatesChanged)
+    Q_PROPERTY(QString serialLastDataAgeText READ serialLastDataAgeText NOTIFY linkStatesChanged)
+    Q_PROPERTY(qint64 serialRxBytesPerSecond READ serialRxBytesPerSecond NOTIFY linkStatesChanged)
+    Q_PROPERTY(qint64 serialTxBytesPerSecond READ serialTxBytesPerSecond NOTIFY linkStatesChanged)
+    Q_PROPERTY(qulonglong serialRxBytes READ serialRxBytes NOTIFY linkStatesChanged)
+    Q_PROPERTY(qulonglong serialTxBytes READ serialTxBytes NOTIFY linkStatesChanged)
+    Q_PROPERTY(int serialReconnectCount READ serialReconnectCount NOTIFY linkStatesChanged)
 
 public:
     explicit ZenithProtocolClient(QObject *parent = nullptr);
@@ -55,12 +67,24 @@ public:
     bool awaitingModeSelectionAck() const;
 
     int transportMode() const;
+    bool active() const;
     void setTransportMode(int mode);
     QString serialPortName() const;
     void setSerialPortName(const QString &name);
     int serialBaudRate() const;
     void setSerialBaudRate(int baud);
     QStringList availableSerialPorts() const;
+    QString serialConnectionState() const;
+    QString serialConnectionStateText() const;
+    QString serialDeviceName() const;
+    QString serialDeviceIdentity() const;
+    QString serialActualPortName() const;
+    QString serialLastDataAgeText() const;
+    qint64 serialRxBytesPerSecond() const;
+    qint64 serialTxBytesPerSecond() const;
+    qulonglong serialRxBytes() const;
+    qulonglong serialTxBytes() const;
+    int serialReconnectCount() const;
     Q_INVOKABLE void refreshSerialPorts();
 
 signals:
@@ -96,7 +120,7 @@ private:
     quint16 crc16Arc(const QByteArray &data) const;
     void appendLog(const QString &line);
     void updateLinkStates();
-    void processBuffer(QByteArray &buffer);
+    int processBuffer(QByteArray &buffer);
     void processFrame(const QByteArray &frame);
     void handleHeartbeatConnection(QTcpSocket *socket);
     void resetFreshness();
@@ -110,6 +134,16 @@ private:
     void stopNetwork();
     void startSerial();
     void stopSerial();
+    void openSerial(bool reconnectAttempt);
+    void scheduleSerialReconnect(const QString &reason);
+    QString resolveSerialPort(bool *ambiguous = nullptr) const;
+    void captureSerialIdentity(const QSerialPortInfo &info);
+    void clearSerialIdentity();
+    void rememberSerialIdentity(const QString &portName, const QSerialPortInfo &info);
+    bool restoreSerialIdentity(const QString &portName);
+    QSerialPortInfo currentSerialPortInfo() const;
+    qint64 writeSerial(const QByteArray &data);
+    void updateSerialRates(qint64 now);
     void onSerialReadyRead();
     void onSerialError(QSerialPort::SerialPortError error);
 
@@ -174,5 +208,30 @@ private:
     QSerialPort m_serialPort;
     QByteArray m_serialRecvBuffer;
     QString m_serialPortName;
-    qint32 m_serialBaudRate{57600};
+    QString m_serialActualPortName;
+    QString m_serialDeviceDescription;
+    QString m_serialNumber;
+    quint16 m_serialVendorId{0};
+    quint16 m_serialProductId{0};
+    bool m_hasSerialVendorId{false};
+    bool m_hasSerialProductId{false};
+    bool m_serialOpening{false};
+    bool m_serialClosing{false};
+    bool m_serialHadValidFrame{false};
+    bool m_serialHasValidFrameSinceOpen{false};
+    bool m_serialDataInterrupted{false};
+    qint64 m_lastSerialValidFrameMs{0};
+    qint64 m_lastSerialDisplayFrameMs{0};
+    qint64 m_serialOpenedAtMs{0};
+    qint64 m_serialRateSampleMs{0};
+    quint64 m_serialRxBytes{0};
+    quint64 m_serialTxBytes{0};
+    quint64 m_serialRateSampleRxBytes{0};
+    quint64 m_serialRateSampleTxBytes{0};
+    qint64 m_serialRxBytesPerSecond{0};
+    qint64 m_serialTxBytesPerSecond{0};
+    int m_serialReconnectCount{0};
+    int m_serialReconnectBackoffStep{0};
+    qint32 m_serialBaudRate{921600};
+    static constexpr int kSerialStaleReconnectMs = 3500;
 };
