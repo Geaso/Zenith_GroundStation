@@ -1640,7 +1640,7 @@ Item {
                                         if (rebootBtn.holdProgress >= 1.0) {
                                             rebootTimer.stop()
                                             rebootBtn.holdProgress = 0.0
-                                            appState.sendRemoteScript("bash /home/jetson/Zenith_ws/shfiles/zenith_reboot_stack.sh")
+                                            appState.sendRemoteScript("bash /opt/zenith/bin/zenith_reboot_stack.sh")
                                         }
                                     }
                                 }
