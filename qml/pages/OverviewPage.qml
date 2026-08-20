@@ -212,7 +212,7 @@ Item {
                         Row {
                             spacing: 3; anchors.verticalCenter: parent.verticalCenter
                             Text { text: "BAT"; color: "#6E7681"; font.pixelSize: 8; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Text { text: appState.connected ? fmt(appState.batteryVoltage, 1) : "0.0"; color: appState.batteryPercent < 0.2 ? "#F85149" : "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: (appState.connected && appState.batteryValid) ? fmt(appState.batteryVoltage, 1) : "--"; color: appState.batteryPercent < 0.2 ? "#F85149" : "#E6EDF3"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                             Text { text: "V"; color: "#6E7681"; font.pixelSize: 8; anchors.verticalCenter: parent.verticalCenter }
                         }
                     }
@@ -1479,7 +1479,7 @@ Item {
                             Item { width: 4; height: 1 }
                             StatusChip { label: appState.connected ? Number(appState.homeDistance).toFixed(1) + "m" : "--"; chipColor: "#1A3D2E" }
                             Item { width: 4; height: 1 }
-                            StatusChip { label: appState.connected ? Number(appState.batteryVoltage).toFixed(1) + "V" : "--"; chipColor: appState.batteryVoltage > 0 && appState.batteryVoltage < 14.0 ? "#6E1A1A" : "#1A3D2E" }
+                            StatusChip { label: (appState.connected && appState.batteryValid) ? Number(appState.batteryVoltage).toFixed(1) + "V" : "--"; chipColor: appState.batteryVoltage > 0 && appState.batteryVoltage < 14.0 ? "#6E1A1A" : "#1A3D2E" }
                         }
                     }
 

@@ -136,6 +136,9 @@ signals:
     void plannedPathChanged();
 
 private:
+    // 链路断开后作废车辆遥测缓存，避免把上一次的数据当成当前值显示
+    void invalidateVehicleData();
+
     QString locationSourceName(int locationSource) const;
     QString gpsStatusName(int gpsStatus) const;
     QList<QPointF> m_pathPoints;

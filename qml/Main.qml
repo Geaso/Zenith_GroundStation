@@ -188,19 +188,19 @@ ApplicationWindow {
                     anchors.verticalCenter: parent.verticalCenter; spacing: 10
                     StatusDot { dotColor: appState.protocolConnected ? "#3FB950" : (appState.protocolClient.active ? "#D29922" : "#F85149"); label: "Link" }
                     StatusDot { dotColor: appState.connected && appState.gpsStatus.indexOf("3D") >= 0 ? "#3FB950" : appState.connected && appState.gpsStatus.indexOf("2D") >= 0 ? "#FFA657" : "#F85149"; label: "GPS" }
-                    StatusDot { dotColor: !appState.connected ? "#484F58" : appState.batteryPercent < 0.2 ? "#F85149" : appState.batteryPercent < 0.4 ? "#FFA657" : "#3FB950"; label: "Bat" }
+                    StatusDot { dotColor: (!appState.connected || !appState.batteryValid) ? "#484F58" : appState.batteryPercent < 0.2 ? "#F85149" : appState.batteryPercent < 0.4 ? "#FFA657" : "#3FB950"; label: "Bat" }
                 }
 
                 Rectangle { width: 1; height: 20; color: "#30363D"; anchors.verticalCenter: parent.verticalCenter }
 
                 // Battery voltage + percent
                 Text {
-                    text: appState.connected ? fmt(appState.batteryVoltage, 1) + "V" : "--"
+                    text: (appState.connected && appState.batteryValid) ? fmt(appState.batteryVoltage, 1) + "V" : "--"
                     color: "#C9D1D9"; font.pixelSize: 13; font.family: "Consolas"; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
-                    text: appState.connected ? Math.round(appState.batteryPercent * 100) + "%" : "--"
+                    text: (appState.connected && appState.batteryValid) ? Math.round(appState.batteryPercent * 100) + "%" : "--"
                     color: appState.batteryPercent < 0.2 ? "#F85149" : "#C9D1D9"
                     font.pixelSize: 13; font.family: "Consolas"; font.bold: true
                     anchors.verticalCenter: parent.verticalCenter

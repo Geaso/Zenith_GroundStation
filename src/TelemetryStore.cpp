@@ -409,6 +409,7 @@ void TelemetryStore::setTransportHealth(bool telemetryFresh, bool heartbeatFresh
 
     const QString nextHeartbeat = heartbeatFresh ? m_heartbeatLink : QStringLiteral("Heartbeat Stale");
     const bool nextConnected = telemetryFresh;
+    const bool telemetryLost = m_connected && !nextConnected;
 
     if (nextFlightStatus == m_flightStatus && nextHeartbeat == m_heartbeatLink && nextConnected == m_connected) {
         return;
@@ -417,7 +418,30 @@ void TelemetryStore::setTransportHealth(bool telemetryFresh, bool heartbeatFresh
     m_flightStatus = nextFlightStatus;
     m_heartbeatLink = nextHeartbeat;
     m_connected = nextConnected;
+    if (telemetryLost) {
+        invalidateVehicleData();
+    }
     emit telemetryChanged();
+}
+
+void TelemetryStore::invalidateVehicleData()
+{
+    // 链路一断，上一次收到的遥测就不再代表飞机现在的状态，必须作废。
+    //
+    // 换电池时最明显：拔电池 -> 飞机断电 -> 插新电池 -> 机载重启。bridge 大约 +5s
+    // 就上线并开始发心跳，而产生 UAVSTATE 的控制状态机要到 +14s 才起来。这中间
+    // 链路已经算"通"了却还没有任何飞行数据，若不清缓存，地面站就会把上一块电池
+    // 拔出前的电压和电量显示成新电池的读数，过几秒才跳到真实值。
+    //
+    // rd_mask 是机载"首次就绪锁存"，飞机重启后会从 0 重新累积，所以这里一并清零，
+    // batteryValid()/locReady() 等判据在新数据到达前保持 false，UI 显示 "--"。
+    m_readyMask = 0;
+    m_batteryVoltage = 0.0;
+    m_batteryPercent = 0.0;
+    m_altitude = 0.0;
+    m_relativeAltitude = 0.0;
+    m_range = 0.0;
+    m_speed = 0.0;
 }
 
 void TelemetryStore::setCommandFeedback(const QString &commandName, const QString &ackText)
