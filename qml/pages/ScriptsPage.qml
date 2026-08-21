@@ -5,10 +5,16 @@ import ZenithUI 1.0
 Item {
     id: root
     property string pendingTaskId: ""
+    property string pendingTaskPath: ""
+    property int pendingDeleteRow: -1
+    property string pendingDeleteName: ""
 
-    function requestStart(taskId, taskName) {
-        if (taskId === "c10_apriltag_landing") {
-            pendingTaskId = taskId
+    function requestStart(taskId, taskName, taskPath, builtIn) {
+        pendingTaskId = taskId
+        pendingTaskPath = taskPath
+        if (!builtIn) {
+            customTaskConfirm.open()
+        } else if (taskId === "c10_apriltag_landing") {
             landingConfirm.open()
         } else {
             appState.startManagedTask(taskId)
@@ -36,6 +42,206 @@ Item {
         }
     }
 
+    Dialog {
+        id: customTaskConfirm
+        anchors.centerIn: parent
+        modal: true
+        title: "确认启动自定义任务"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: appState.startCustomManagedTask(
+                        root.pendingTaskId, root.pendingTaskPath)
+
+        contentItem: Text {
+            width: 500
+            wrapMode: Text.WrapAnywhere
+            color: "#E6EDF3"
+            text: "任务 ID：" + root.pendingTaskId
+                  + "\n机载路径：" + root.pendingTaskPath
+                  + "\n\n将执行 Jetson 上该路径对应的程序，并由任务管理器托管其进程。请确认文件来源和飞行行为。"
+        }
+        background: Rectangle {
+            radius: 10
+            color: "#161B22"
+            border.color: "#8B5A2B"
+        }
+    }
+
+    Dialog {
+        id: deleteConfirm
+        anchors.centerIn: parent
+        modal: true
+        title: "删除自定义任务"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: scriptActionModel.removeCustomAction(root.pendingDeleteRow)
+
+        contentItem: Text {
+            width: 420
+            wrapMode: Text.WordWrap
+            color: "#E6EDF3"
+            text: "确定从地面站任务库删除“" + root.pendingDeleteName + "”吗？\n只删除地面站记录，不删除 Jetson 上的任务文件。"
+        }
+        background: Rectangle {
+            radius: 10
+            color: "#161B22"
+            border.color: "#7D2525"
+        }
+    }
+
+    Dialog {
+        id: taskEditor
+        anchors.centerIn: parent
+        modal: true
+        title: editRow < 0 ? "新增自定义任务" : "编辑自定义任务"
+        standardButtons: Dialog.NoButton
+        property int editRow: -1
+
+        function openForCreate() {
+            editRow = -1
+            taskNameField.text = ""
+            taskIdField.text = ""
+            taskPathField.text = "/home/jetson/task_ws/src/user_tasks/"
+            taskNoteField.text = ""
+            editorError.text = ""
+            open()
+            taskNameField.forceActiveFocus()
+        }
+
+        function openForEdit(row, name, taskId, taskPath, note) {
+            editRow = row
+            taskNameField.text = name
+            taskIdField.text = taskId
+            taskPathField.text = taskPath
+            taskNoteField.text = note
+            editorError.text = ""
+            open()
+            taskNameField.forceActiveFocus()
+        }
+
+        function saveTask() {
+            var ok
+            if (editRow < 0) {
+                ok = scriptActionModel.addCustomAction(
+                            taskNameField.text, taskIdField.text,
+                            taskPathField.text, taskNoteField.text)
+            } else {
+                ok = scriptActionModel.updateCustomAction(
+                            editRow, taskNameField.text, taskIdField.text,
+                            taskPathField.text, taskNoteField.text)
+            }
+            if (ok) {
+                close()
+            } else {
+                editorError.text = scriptActionModel.lastError
+            }
+        }
+
+        contentItem: Column {
+            width: 560
+            height: 356
+            spacing: 7
+
+            Text { text: "任务名称"; color: "#8B949E"; font.pixelSize: 11 }
+            TextField {
+                id: taskNameField
+                width: parent.width
+                height: 34
+                maximumLength: 64
+                placeholderText: "例如：仓库巡检"
+                color: "#E6EDF3"
+                placeholderTextColor: "#6E7681"
+                selectByMouse: true
+                background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+            }
+
+            Text { text: "任务 ID（唯一）"; color: "#8B949E"; font.pixelSize: 11 }
+            TextField {
+                id: taskIdField
+                width: parent.width
+                height: 34
+                maximumLength: 64
+                placeholderText: "例如：warehouse_inspection"
+                color: "#E6EDF3"
+                placeholderTextColor: "#6E7681"
+                selectByMouse: true
+                background: Rectangle {
+                    radius: 6
+                    color: "#0D1117"
+                    border.color: taskIdField.text.length === 0
+                                  || (/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/).test(taskIdField.text.trim())
+                                  ? "#30363D" : "#F85149"
+                }
+            }
+
+            Text { text: "Jetson 任务绝对路径"; color: "#8B949E"; font.pixelSize: 11 }
+            TextField {
+                id: taskPathField
+                width: parent.width
+                height: 34
+                maximumLength: 512
+                placeholderText: "/home/jetson/task_ws/src/user_tasks/.../my_task.launch"
+                color: "#E6EDF3"
+                placeholderTextColor: "#6E7681"
+                selectByMouse: true
+                background: Rectangle {
+                    radius: 6
+                    color: "#0D1117"
+                    border.color: taskPathField.text.length === 0
+                                  || taskPathField.text.trim().startsWith(
+                                      "/home/jetson/task_ws/src/user_tasks/")
+                                  ? "#30363D" : "#F85149"
+                }
+            }
+
+            Text { text: "任务说明（可选）"; color: "#8B949E"; font.pixelSize: 11 }
+            TextField {
+                id: taskNoteField
+                width: parent.width
+                height: 34
+                maximumLength: 200
+                placeholderText: "说明任务用途、前置条件或注意事项"
+                color: "#E6EDF3"
+                placeholderTextColor: "#6E7681"
+                selectByMouse: true
+                background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+            }
+
+            Text {
+                id: editorError
+                width: parent.width
+                height: 18
+                color: "#F85149"
+                font.pixelSize: 11
+                elide: Text.ElideRight
+            }
+
+            Row {
+                anchors.right: parent.right
+                spacing: 8
+                PrimaryButton {
+                    width: 82; height: 32
+                    text: "取消"
+                    fillColor: "#21262D"
+                    onClicked: taskEditor.close()
+                }
+                PrimaryButton {
+                    width: 100; height: 32
+                    text: taskEditor.editRow < 0 ? "添加任务" : "保存修改"
+                    fillColor: "#1A4A2E"
+                    enabled: taskNameField.text.trim().length > 0
+                             && taskIdField.text.trim().length > 0
+                             && taskPathField.text.trim().startsWith(
+                                 "/home/jetson/task_ws/src/user_tasks/")
+                    onClicked: taskEditor.saveTask()
+                }
+            }
+        }
+        background: Rectangle {
+            radius: 10
+            color: "#161B22"
+            border.color: "#30363D"
+        }
+    }
+
     Column {
         anchors.fill: parent
         spacing: 10
@@ -45,19 +251,29 @@ Item {
             height: 34
             spacing: 12
             Text {
-                text: "机载任务"
+                text: "机载任务库"
                 color: "#E6EDF3"
                 font.pixelSize: 16
                 font.bold: true
                 anchors.verticalCenter: parent.verticalCenter
             }
             Text {
-                text: scriptActionModel.count + " 个白名单任务"
+                text: scriptActionModel.builtInCount + " 个内置 · "
+                      + scriptActionModel.customCount + " 个自定义"
                 color: "#6E7681"
                 font.pixelSize: 12
                 anchors.verticalCenter: parent.verticalCenter
             }
             Item { width: 20; height: 1 }
+            PrimaryButton {
+                width: 92
+                height: 28
+                text: "新增任务"
+                fillColor: "#1A4A2E"
+                enabled: !appState.managedTaskActive
+                anchors.verticalCenter: parent.verticalCenter
+                onClicked: taskEditor.openForCreate()
+            }
             PrimaryButton {
                 width: 86
                 height: 28
@@ -94,14 +310,22 @@ Item {
                 }
                 Column {
                     width: 250
-                    spacing: 5
-                    Text { text: "任务 ID"; color: "#8B949E"; font.pixelSize: 11 }
+                    spacing: 4
+                    Text { text: "任务 ID / 路径"; color: "#8B949E"; font.pixelSize: 11 }
                     Text {
                         width: parent.width
                         text: appState.managedTaskName.length > 0 ? appState.managedTaskName : "--"
                         color: "#E6EDF3"
                         font.pixelSize: 13
                         elide: Text.ElideRight
+                    }
+                    Text {
+                        width: parent.width
+                        text: appState.managedTaskPath
+                        visible: text.length > 0
+                        color: "#8B949E"
+                        font.pixelSize: 10
+                        elide: Text.ElideMiddle
                     }
                 }
                 Column {
@@ -131,7 +355,7 @@ Item {
             Text {
                 anchors.fill: parent
                 anchors.margins: 9
-                text: "停止任务：先停止任务输出，再锁定当前位置并请求 RC_POS_CONTROL；不会触发降落。若已在 LAND_CONTROL，则不干预降落。"
+                text: "内置任务受保护；自定义任务持久保存。停止任务时先停止输出，再按当前飞行状态执行悬停交接。"
                 color: "#D29922"
                 font.pixelSize: 11
                 verticalAlignment: Text.AlignVCenter
@@ -150,15 +374,17 @@ Item {
                 required property int index
                 required property string name
                 required property string command
+                required property string taskPath
                 required property string note
                 required property string category
+                required property bool builtIn
                 readonly property bool isActive:
                     appState.managedTaskActive && appState.managedTaskName === command
                 readonly property bool isLast:
                     !appState.managedTaskActive && appState.managedTaskName === command
 
                 width: ListView.view.width
-                height: 82
+                height: 96
                 radius: 10
                 color: isActive ? "#15251C" : "#161B22"
                 border.color: isActive ? "#2EA043" : "#30363D"
@@ -169,16 +395,18 @@ Item {
                     spacing: 14
 
                     Rectangle {
-                        width: 54
+                        width: 64
                         height: 24
                         radius: 12
-                        color: category === "降落" ? "#3A211C"
+                        color: !builtIn ? "#2A2038"
+                              : category === "降落" ? "#3A211C"
                               : category === "跟踪" ? "#17243A" : "#1A2D24"
                         anchors.verticalCenter: parent.verticalCenter
                         Text {
                             anchors.centerIn: parent
-                            text: category
-                            color: category === "降落" ? "#F0883E"
+                            text: builtIn ? category : "自定义"
+                            color: !builtIn ? "#BC8CFF"
+                                  : category === "降落" ? "#F0883E"
                                   : category === "跟踪" ? "#58A6FF" : "#3FB950"
                             font.pixelSize: 11
                             font.bold: true
@@ -186,12 +414,17 @@ Item {
                     }
 
                     Column {
-                        width: parent.width - 278
-                        spacing: 6
+                        width: parent.width - actionRow.width - 92
+                        spacing: 4
                         anchors.verticalCenter: parent.verticalCenter
                         Row {
                             spacing: 10
                             Text { text: name; color: "#E6EDF3"; font.pixelSize: 14; font.bold: true }
+                            Text {
+                                text: builtIn ? "内置保护" : command
+                                color: builtIn ? "#6E7681" : "#BC8CFF"
+                                font.pixelSize: 10
+                            }
                             Text {
                                 text: isActive ? appState.managedTaskState : (isLast ? appState.managedTaskState : "")
                                 color: isActive ? "#3FB950" : "#8B949E"
@@ -200,33 +433,65 @@ Item {
                         }
                         Text {
                             width: parent.width
-                            text: note
+                            text: note.length > 0 ? note : "未填写任务说明"
                             color: "#8B949E"
-                            font.pixelSize: 12
+                            font.pixelSize: 11
                             elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            visible: !builtIn
+                            text: taskPath
+                            color: "#6E7681"
+                            font.pixelSize: 10
+                            elide: Text.ElideMiddle
                         }
                     }
 
                     Row {
-                        width: 196
+                        id: actionRow
+                        width: builtIn ? 196 : 328
                         spacing: 8
                         anchors.verticalCenter: parent.verticalCenter
                         PrimaryButton {
-                            width: 92
+                            width: builtIn ? 92 : 70
                             height: 32
                             text: category === "降落" ? "启动精降" : "启动"
                             fillColor: category === "降落" ? "#6E3B1F" : "#1A4A2E"
                             enabled: appState.protocolConnected && !appState.managedTaskActive
-                            onClicked: root.requestStart(command, name)
+                            onClicked: root.requestStart(command, name, taskPath, builtIn)
                         }
                         PrimaryButton {
-                            width: 92
+                            width: builtIn ? 92 : 70
                             height: 32
                             text: "安全停止"
                             fillColor: isActive ? "#7D2525" : "#21262D"
                             textColor: isActive ? "#FFFFFF" : "#6E7681"
                             enabled: appState.protocolConnected && isActive
                             onClicked: appState.stopManagedTask(command)
+                        }
+                        PrimaryButton {
+                            visible: !builtIn
+                            width: 70
+                            height: 32
+                            text: "编辑"
+                            fillColor: "#21262D"
+                            enabled: !appState.managedTaskActive
+                            onClicked: taskEditor.openForEdit(
+                                           index, name, command, taskPath, note)
+                        }
+                        PrimaryButton {
+                            visible: !builtIn
+                            width: 70
+                            height: 32
+                            text: "删除"
+                            fillColor: "#4A2020"
+                            enabled: !appState.managedTaskActive
+                            onClicked: {
+                                root.pendingDeleteRow = index
+                                root.pendingDeleteName = name
+                                deleteConfirm.open()
+                            }
                         }
                     }
                 }

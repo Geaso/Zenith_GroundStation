@@ -8,6 +8,7 @@
 #include "ZenithProtocol.h"
 
 #include <QDateTime>
+#include <QRegularExpression>
 #include <QSettings>
 #include <QTimer>
 #include <cmath>
@@ -193,6 +194,7 @@ QString AppState::currentTime() const { return m_currentTime; }
 QString AppState::lastCommand() const { return m_lastCommand; }
 QString AppState::commandAck() const { return m_commandAck; }
 QString AppState::managedTaskName() const { return m_telemetryStore->managedTaskName(); }
+QString AppState::managedTaskPath() const { return m_telemetryStore->managedTaskPath(); }
 QString AppState::managedTaskState() const { return m_telemetryStore->managedTaskState(); }
 QString AppState::managedTaskReason() const { return m_telemetryStore->managedTaskReason(); }
 QString AppState::managedTaskAck() const { return m_telemetryStore->managedTaskAck(); }
@@ -242,6 +244,36 @@ void AppState::startManagedTask(const QString &taskName)
         taskName, QStringLiteral("START"),
         taskName == QLatin1String("zenith_tracking_unified"));
     emit commandTriggered(QStringLiteral("Task START: %1").arg(taskName));
+}
+
+bool AppState::startCustomManagedTask(const QString &taskName, const QString &taskPath)
+{
+    const QString normalizedName = taskName.trimmed();
+    QString normalizedPath = taskPath.trimmed();
+    normalizedPath.replace(QLatin1Char('\\'), QLatin1Char('/'));
+
+    static const QRegularExpression taskNamePattern(
+        QStringLiteral("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"));
+    if (!taskNamePattern.match(normalizedName).hasMatch()) {
+        m_telemetryStore->setCommandFeedback(
+            QStringLiteral("Custom Task"),
+            QStringLiteral("Blocked: 任务 ID 只能包含字母、数字、点、下划线和短横线（最多 64 字符）"));
+        return false;
+    }
+    if (!normalizedPath.startsWith(QLatin1Char('/')) ||
+        normalizedPath.size() > 512 || normalizedPath.contains(QLatin1Char('\n')) ||
+        normalizedPath.contains(QLatin1Char('\r'))) {
+        m_telemetryStore->setCommandFeedback(
+            QStringLiteral("Custom Task"),
+            QStringLiteral("Blocked: 请输入 Jetson 上不超过 512 字符的绝对路径"));
+        return false;
+    }
+
+    m_commandDispatcher->sendManagedTaskRequest(
+        normalizedName, QStringLiteral("START"), false, normalizedPath);
+    emit commandTriggered(
+        QStringLiteral("Custom Task START: %1 (%2)").arg(normalizedName, normalizedPath));
+    return true;
 }
 
 void AppState::stopManagedTask(const QString &taskName)

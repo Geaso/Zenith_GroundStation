@@ -151,7 +151,8 @@ void CommandDispatcher::runScript(const QString &name, const QString &command, c
 
 void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
                                                 const QString &action,
-                                                bool yawEnable)
+                                                bool yawEnable,
+                                                const QString &taskPath)
 {
     const QString normalizedAction = action.trimmed().toUpper();
     const QString commandName = QStringLiteral("ManagedTask %1 %2")
@@ -168,7 +169,7 @@ void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
         int type;
         QString value;
     };
-    const QList<Field> fields = {
+    QList<Field> fields = {
         {QStringLiteral("task_schema"), 1, QStringLiteral("1")},
         {QStringLiteral("task_request_id"), 5, requestId},
         {QStringLiteral("task_name"), 5, taskName},
@@ -177,6 +178,9 @@ void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
         {QStringLiteral("task_yaw_enable"), 2,
          yawEnable ? QStringLiteral("true") : QStringLiteral("false")},
     };
+    if (!taskPath.isEmpty()) {
+        fields.append({QStringLiteral("task_path"), 5, taskPath});
+    }
 
     // JsonConverter in the aircraft bridge uses this indexed flat shape for
     // CustomDataSegment_1 (message 113).

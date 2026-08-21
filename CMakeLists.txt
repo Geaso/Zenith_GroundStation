@@ -109,3 +109,15 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 )
 
 qt_finalize_executable(${PROJECT_NAME})
+
+include(CTest)
+if(BUILD_TESTING)
+    qt_add_executable(ScriptActionModelTests
+        tests/test_script_action_model.cpp
+        src/ScriptActionModel.cpp
+        src/ScriptActionModel.h
+    )
+    target_include_directories(ScriptActionModelTests PRIVATE src)
+    target_link_libraries(ScriptActionModelTests PRIVATE Qt6::Core)
+    add_test(NAME script_action_model_crud COMMAND ScriptActionModelTests)
+endif()

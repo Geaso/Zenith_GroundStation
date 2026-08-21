@@ -81,6 +81,7 @@ class AppState : public QObject
     Q_PROPERTY(QString lastCommand READ lastCommand NOTIFY telemetryChanged)
     Q_PROPERTY(QString commandAck READ commandAck NOTIFY telemetryChanged)
     Q_PROPERTY(QString managedTaskName READ managedTaskName NOTIFY telemetryChanged)
+    Q_PROPERTY(QString managedTaskPath READ managedTaskPath NOTIFY telemetryChanged)
     Q_PROPERTY(QString managedTaskState READ managedTaskState NOTIFY telemetryChanged)
     Q_PROPERTY(QString managedTaskReason READ managedTaskReason NOTIFY telemetryChanged)
     Q_PROPERTY(QString managedTaskAck READ managedTaskAck NOTIFY telemetryChanged)
@@ -186,6 +187,7 @@ public:
     QString lastCommand() const;
     QString commandAck() const;
     QString managedTaskName() const;
+    QString managedTaskPath() const;
     QString managedTaskState() const;
     QString managedTaskReason() const;
     QString managedTaskAck() const;
@@ -209,6 +211,7 @@ public:
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScriptAction(const QString &name, const QString &command, const QString &target);
     Q_INVOKABLE void startManagedTask(const QString &taskName);
+    Q_INVOKABLE bool startCustomManagedTask(const QString &taskName, const QString &taskPath);
     Q_INVOKABLE void stopManagedTask(const QString &taskName);
     Q_INVOKABLE void queryManagedTask();
     Q_INVOKABLE void sendRemoteScript(const QString &cmd);

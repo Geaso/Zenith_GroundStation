@@ -15,7 +15,8 @@ public:
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScript(const QString &name, const QString &command, const QString &target);
     Q_INVOKABLE void sendManagedTaskRequest(const QString &taskName, const QString &action,
-                                            bool yawEnable = false);
+                                            bool yawEnable = false,
+                                            const QString &taskPath = QString());
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);
     Q_INVOKABLE void switchLocationSource(int sourceIndex);

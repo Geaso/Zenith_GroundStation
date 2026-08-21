@@ -67,6 +67,7 @@ public:
     QString lastCommand() const;
     QString commandAck() const;
     QString managedTaskName() const;
+    QString managedTaskPath() const;
     QString managedTaskState() const;
     QString managedTaskReason() const;
     QString managedTaskAck() const;
@@ -184,6 +185,7 @@ private:
     QString m_lastCommand;
     QString m_commandAck;
     QString m_managedTaskName;
+    QString m_managedTaskPath;
     QString m_managedTaskState = "UNKNOWN";
     QString m_managedTaskReason = "尚未收到机载任务管理器状态";
     QString m_managedTaskAck;

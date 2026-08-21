@@ -6,7 +6,7 @@ The current prototype includes:
 
 - `Overview`: status header, live video panel, quick actions, manual command area
 - `Map / Track`: mission map canvas, track view, waypoint list, mission actions
-- `Scripts`: allow-listed aircraft task cards with start/stop ACK and lifecycle status
+- `Scripts`: four protected built-in task cards plus a persistent custom-task library with add/view/edit/delete, onboard absolute paths, start/stop ACK and lifecycle status
 
 ## Structure
 
@@ -21,7 +21,11 @@ The current prototype includes:
   - `pages/`: main views
   - `components/`: reusable UI building blocks
 - `config/`
-  - `script_actions.json`: display metadata and stable IDs for aircraft-managed tasks
+  - `script_actions.json`: read-only display metadata and stable IDs for the four built-in aircraft-managed tasks
+
+Custom tasks are stored per Windows user in Qt's `AppDataLocation` as
+`custom_tasks.json`, so rebuilding or replacing the portable executable does
+not erase the user's task library.
   - `zenith_protocol.json`: transport and topic defaults extracted from the Zenith project
 - `docs/`
   - `zenith_adaptation.md`: comparison and adaptation notes

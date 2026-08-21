@@ -90,6 +90,7 @@ QString TelemetryStore::currentTime() const { return m_currentTime; }
 QString TelemetryStore::lastCommand() const { return m_lastCommand; }
 QString TelemetryStore::commandAck() const { return m_commandAck; }
 QString TelemetryStore::managedTaskName() const { return m_managedTaskName; }
+QString TelemetryStore::managedTaskPath() const { return m_managedTaskPath; }
 QString TelemetryStore::managedTaskState() const { return m_managedTaskState; }
 QString TelemetryStore::managedTaskReason() const { return m_managedTaskReason; }
 QString TelemetryStore::managedTaskAck() const { return m_managedTaskAck; }
@@ -611,6 +612,9 @@ void TelemetryStore::applyCustomDataSegment(const QVariantMap &payload)
             preflightTouched = true;
         } else if (key == QLatin1String("task_name")) {
             m_managedTaskName = value;
+            touched = true;
+        } else if (key == QLatin1String("task_path")) {
+            m_managedTaskPath = value;
             touched = true;
         } else if (key == QLatin1String("task_state")) {
             m_managedTaskState = value;
