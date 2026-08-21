@@ -169,6 +169,7 @@ QString AppState::preflightArmAckText() const { return m_preflightArmAckText; }
 QString AppState::missionLogText() const { return m_missionLogText; }
 bool AppState::linkEstablished() const { return m_linkEstablished; }
 bool AppState::batteryValid() const { return m_batteryValid; }
+bool AppState::telemetryStable() const { return m_telemetryStable; }
 bool AppState::allReady() const { return m_allReady; }
 int  AppState::aircraftUptime() const { return m_aircraftUptime; }
 QVariantList AppState::readinessSteps() const { return m_readinessSteps; }
@@ -528,6 +529,7 @@ void AppState::syncFromStore()
     m_preflightArmAckText = m_telemetryStore->preflightArmAckText();
     m_missionLogText = m_telemetryStore->missionLogText();
     m_linkEstablished = m_telemetryStore->linkEstablished();
+    m_telemetryStable = m_telemetryStore->telemetryStable();
     m_batteryValid = m_telemetryStore->batteryValid();
     m_aircraftUptime = m_telemetryStore->aircraftUptime();
     m_readinessSteps = m_telemetryStore->readinessSteps();

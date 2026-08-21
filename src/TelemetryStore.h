@@ -119,6 +119,12 @@ public:
     // ---- 链路/就绪状态（DJI 式分层提示）----
     void noteFrameReceived();             // 收到任一 CRC 通过的帧时调用
     bool linkEstablished() const;         // 已对频：收到过有效帧
+    // 飞行遥测是否已稳定。connected 只代表"收到过任一帧"（心跳就能置真），而 UAVSTATE
+    // 要等机载控制状态机起来才有，中间那十几秒 UI 会把默认值 0.00 当成真实读数显示。
+    // 这里要求连续收到若干帧 UAVSTATE 且持续一小段时间，期间前端只显示"已建立连接"。
+    // 刻意不依赖 rd_mask/batteryValid——preflight_reporter 是可选节点，没跑时不能把
+    // 整个仪表盘永久卡在等待态。
+    bool telemetryStable() const;
     bool batteryValid() const;            // 电池首值是否已到（未到时 UI 显示 "--" 而非 0.0V）
     bool fcuReady() const;
     bool locReady() const;
@@ -169,6 +175,10 @@ private:
     QStringList m_missionLog;   // 任务日志，最新在前，上限 MissionLogMax 条
     static const int MissionLogMax = 300;
     bool m_linkEstablished = false;
+    int  m_uavStateFrames = 0;      // 自上次链路作废以来收到的 UAVSTATE 帧数
+    qint64 m_firstUavStateMs = 0;   // 首帧 UAVSTATE 的单调时刻，0 表示尚未收到
+    static const int StableFrames = 5;      // 10Hz 下约 0.5s
+    static const int StableDwellMs = 1000;  // 再叠加 1s 静默期，跨过重启抖动
     int  m_readyMask = 0;
     QString m_readyTimes;
     int  m_aircraftUptime = 0;

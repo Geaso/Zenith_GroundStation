@@ -898,6 +898,7 @@ Item {
 
                 // 本地累积的 Zenith 状态快照（stdout 风格）
                 property string zenithStateLog: ""
+                property bool waitingLogged: false
 
                 Timer {
                     running: dataView.visible && appState.connected
@@ -907,18 +908,33 @@ Item {
                         function f(v, d) { return Number(v).toFixed(d === undefined ? 2 : d) }
                         function pad(s, n) { s = String(s); while (s.length < n) s += " "; return s }
                         var now = new Date().toTimeString().substring(0, 8)
+                        if (!appState.telemetryStable) {
+                            // 机载重启/换电池后 bridge 先上线、UAVSTATE 后到。这段窗口里
+                            // 所有数值都还是默认值 0.00，打成快照会被当成真实读数。
+                            if (!dataView.waitingLogged) {
+                                dataView.zenithStateLog = "[" + now + "] 已建立连接，等待遥测数据…
+
+"
+                                                        + dataView.zenithStateLog
+                                dataView.waitingLogged = true
+                            }
+                            return
+                        }
+                        dataView.waitingLogged = false
                         var snap = "[" + now + "] " + ">>>>>>>>>>>>>>>>>>>> UAV State <<<<<<<<<<<<<<<<<<<<\n"
                             + "PX4 Status   : [ " + (appState.connected ? "Connected" : "Disconnected") + " ] "
                             + "[ " + (appState.armed ? "Armed" : "DisArmed") + " ] "
                             + "[ " + (appState.flightMode || "UNKNOWN") + " ]\n"
                             + "Location     : [ " + (appState.locationSource || "?") + " ]\n"
                             + "Odom Status  : [ " + (appState.odomValid ? "Valid" : "Invalid") + " ]\n"
-                            + "Arm Check    : [ " + (!appState.preflightValid ? "无数据"
+                            + "Arm Check    : [ " + (appState.armed ? "飞行中，不适用"
+                                : !appState.preflightValid ? "无数据"
                                 : !appState.preflightArmOk ? "不可解锁"
                                 : (appState.preflightPrearmBit ? "可解锁" : "传感器自检通过")) + " ]"
-                            + ((appState.preflightValid && !appState.preflightArmOk && appState.preflightFail)
+                            + ((!appState.armed && appState.preflightValid
+                                && !appState.preflightArmOk && appState.preflightFail)
                                 ? "  故障: " + appState.preflightFail : "")
-                            + (appState.preflightArmAck > 0
+                            + ((!appState.armed && appState.preflightArmAck > 0)
                                 ? "  上次解锁被拒: " + appState.preflightArmAckText : "") + "\n"
                             + "VINS_pos [m] : X=" + f(appState.vinsPositionX) + "  Y=" + f(appState.vinsPositionY) + "  Z=" + f(appState.vinsPositionZ) + "\n"
                             + "UAV_pos [m]  : X=" + f(appState.positionX) + "  Y=" + f(appState.positionY) + "  Z=" + f(appState.positionZ) + "\n"
@@ -1454,7 +1470,7 @@ Item {
                             Column {
                                 spacing: 2
                                 Text { text: "Exec State"; color: "#6E7681"; font.pixelSize: 9 }
-                                Text { text: appState.connected ? appState.execState : "N/A"; color: "#E6EDF3"; font.pixelSize: 14; font.bold: true }
+                                Text { text: appState.telemetryStable ? appState.execState : "N/A"; color: "#E6EDF3"; font.pixelSize: 14; font.bold: true }
                             }
                             Item { width: parent.width - 150; height: 1 }
                             Rectangle {
@@ -1475,9 +1491,9 @@ Item {
                         // ── 紧凑状态行 ──
                         Row {
                             width: parent.width; spacing: 0
-                            StatusChip { label: appState.connected ? appState.locationSource : "--"; chipColor: "#1F3D6F" }
+                            StatusChip { label: appState.telemetryStable ? appState.locationSource : "--"; chipColor: "#1F3D6F" }
                             Item { width: 4; height: 1 }
-                            StatusChip { label: appState.connected ? Number(appState.homeDistance).toFixed(1) + "m" : "--"; chipColor: "#1A3D2E" }
+                            StatusChip { label: appState.telemetryStable ? Number(appState.homeDistance).toFixed(1) + "m" : "--"; chipColor: "#1A3D2E" }
                             Item { width: 4; height: 1 }
                             StatusChip { label: (appState.connected && appState.batteryValid) ? Number(appState.batteryVoltage).toFixed(1) + "V" : "--"; chipColor: appState.batteryVoltage > 0 && appState.batteryVoltage < 14.0 ? "#6E1A1A" : "#1A3D2E" }
                         }
@@ -1509,11 +1525,11 @@ Item {
                         Text { text: "NAVIGATION"; color: "#8B949E"; font.pixelSize: 9; font.bold: true; font.letterSpacing: 1 }
 
                         TelemetryGroup { title: "位置 [m]"; labels: ["X","Y","Z"]
-                            values: appState.connected ? [ fmt(appState.positionX, 2), fmt(appState.positionY, 2), fmt(appState.positionZ, 2) ] : ["--","--","--"] }
+                            values: appState.telemetryStable ? [ fmt(appState.positionX, 2), fmt(appState.positionY, 2), fmt(appState.positionZ, 2) ] : ["--","--","--"] }
                         TelemetryGroup { title: "速度 [m/s]"; labels: ["X","Y","Z"]
-                            values: appState.connected ? [ fmt(appState.velocityX, 2), fmt(appState.velocityY, 2), fmt(appState.velocityZ, 2) ] : ["--","--","--"] }
+                            values: appState.telemetryStable ? [ fmt(appState.velocityX, 2), fmt(appState.velocityY, 2), fmt(appState.velocityZ, 2) ] : ["--","--","--"] }
                         TelemetryGroup { title: "姿态 [deg]"; labels: ["R","P","Y"]
-                            values: appState.connected ? [ fmt(appState.roll, 1), fmt(appState.pitch, 1), fmt(appState.yaw, 1) ] : ["--","--","--"] }
+                            values: appState.telemetryStable ? [ fmt(appState.roll, 1), fmt(appState.pitch, 1), fmt(appState.yaw, 1) ] : ["--","--","--"] }
                     }
 
                     Rectangle { width: parent.width - 20; height: 1; color: "#262C36" }
@@ -1537,12 +1553,16 @@ Item {
                             // ── 解锁前检查：PX4 SYS_STATUS 传感器健康位（机载 preflight_reporter 上报）──
                             Rectangle {
                                 id: preflightPanel
+                                // 解锁检查是起飞前判据。飞机一旦解锁（尤其低电量飞行时
+                                // SYS_STATUS 的电池健康位会翻假），再把它渲染成红色"不可解锁"
+                                // 就是误报——此时既不需要解锁，也无法据此做任何处置。
+                                property bool pfApplicable: !appState.armed
                                 width: parent.width
                                 height: pfCol.implicitHeight + 12
                                 radius: 5
                                 color: "#0D1117"
                                 border.width: 1
-                                border.color: !appState.preflightValid ? "#30363D"
+                                border.color: (!preflightPanel.pfApplicable || !appState.preflightValid) ? "#30363D"
                                             : (appState.preflightArmOk ? "#2A5A34" : "#6E2B2B")
 
                                 Column {
@@ -1556,16 +1576,17 @@ Item {
                                         Rectangle {
                                             width: 8; height: 8; radius: 4
                                             anchors.verticalCenter: parent.verticalCenter
-                                            color: !appState.preflightValid ? "#484F58"
+                                            color: (!preflightPanel.pfApplicable || !appState.preflightValid) ? "#484F58"
                                                  : (appState.preflightArmOk ? "#3FB950" : "#F85149")
                                         }
                                         Text {
                                             // 措辞按可信度区分：飞控上报 PREARM_CHECK 位时才是权威判据，
                                             // 否则只代表"传感器自检"，不能等同于飞控允许解锁。
-                                            text: !appState.preflightValid ? "解锁检查 — 无数据"
+                                            text: !preflightPanel.pfApplicable ? "飞行中 — 解锁检查不适用"
+                                                : !appState.preflightValid ? "解锁检查 — 无数据"
                                                 : !appState.preflightArmOk ? "不可解锁"
                                                 : (appState.preflightPrearmBit ? "可安全解锁" : "传感器自检通过")
-                                            color: !appState.preflightValid ? "#8B949E"
+                                            color: (!preflightPanel.pfApplicable || !appState.preflightValid) ? "#8B949E"
                                                  : (appState.preflightArmOk ? "#3FB950" : "#F85149")
                                             font.pixelSize: 11; font.bold: true
                                         }
@@ -1573,8 +1594,8 @@ Item {
 
                                     // 自检通过但飞控未提供权威位时，明确提示这不是完整判据
                                     Text {
-                                        visible: appState.preflightValid && appState.preflightArmOk
-                                                 && !appState.preflightPrearmBit
+                                        visible: preflightPanel.pfApplicable && appState.preflightValid
+                                                 && appState.preflightArmOk && !appState.preflightPrearmBit
                                         width: parent.width
                                         wrapMode: Text.WordWrap
                                         text: "仅传感器健康位，未覆盖遥控/模式/安全开关/参数等检查"
@@ -1583,7 +1604,8 @@ Item {
 
                                     // 上次解锁尝试被飞控拒绝 —— 这是 100% 真实的拒绝信号
                                     Row {
-                                        visible: appState.preflightArmAck > 0
+                                        // 解锁成功后，上一次被拒的记录已经是历史，继续挂红字只会误导
+                                        visible: preflightPanel.pfApplicable && appState.preflightArmAck > 0
                                         spacing: 5
                                         Text { text: "⚠"; color: "#D29922"; font.pixelSize: 10 }
                                         Text {
@@ -1596,7 +1618,7 @@ Item {
                                     Repeater {
                                         model: appState.preflightChecks
                                         delegate: Row {
-                                            visible: !modelData.healthy
+                                            visible: preflightPanel.pfApplicable && !modelData.healthy
                                             spacing: 5
                                             Text { text: "✕"; color: "#F85149"; font.pixelSize: 10 }
                                             Text {

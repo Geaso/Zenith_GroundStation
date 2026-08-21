@@ -120,4 +120,13 @@ if(BUILD_TESTING)
     target_include_directories(ScriptActionModelTests PRIVATE src)
     target_link_libraries(ScriptActionModelTests PRIVATE Qt6::Core)
     add_test(NAME script_action_model_crud COMMAND ScriptActionModelTests)
+
+    qt_add_executable(TelemetryStabilityTests
+        tests/test_telemetry_stability.cpp
+        src/TelemetryStore.cpp
+        src/TelemetryStore.h
+    )
+    target_include_directories(TelemetryStabilityTests PRIVATE src)
+    target_link_libraries(TelemetryStabilityTests PRIVATE Qt6::Core Qt6::Gui)
+    add_test(NAME telemetry_stability COMMAND TelemetryStabilityTests)
 endif()

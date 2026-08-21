@@ -144,6 +144,13 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
 
     m_currentTime = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
     m_connected = payload.value("connected", true).toBool();
+    // 收到真正的飞行遥测才计数；心跳帧不走这里，所以不会把"链路通"误判成"数据可用"。
+    if (m_uavStateFrames < StableFrames) {
+        ++m_uavStateFrames;
+    }
+    if (m_firstUavStateMs == 0) {
+        m_firstUavStateMs = QDateTime::currentMSecsSinceEpoch();
+    }
     bool wasArmed = m_armed;
     m_armed = payload.value("armed", false).toBool();
     if (m_armed && !wasArmed) {
@@ -298,6 +305,17 @@ void TelemetryStore::noteFrameReceived()
 }
 
 bool TelemetryStore::linkEstablished() const { return m_linkEstablished; }
+bool TelemetryStore::telemetryStable() const
+{
+    if (!m_connected || m_firstUavStateMs == 0) {
+        return false;
+    }
+    if (m_uavStateFrames < StableFrames) {
+        return false;
+    }
+    return (QDateTime::currentMSecsSinceEpoch() - m_firstUavStateMs) >= StableDwellMs;
+}
+
 bool TelemetryStore::fcuReady()  const { return m_readyMask & 0x1; }
 bool TelemetryStore::batteryValid() const { return m_readyMask & 0x2; }
 bool TelemetryStore::locReady()  const { return m_readyMask & 0x4; }
@@ -437,6 +455,9 @@ void TelemetryStore::invalidateVehicleData()
     // rd_mask 是机载"首次就绪锁存"，飞机重启后会从 0 重新累积，所以这里一并清零，
     // batteryValid()/locReady() 等判据在新数据到达前保持 false，UI 显示 "--"。
     m_readyMask = 0;
+    // 重新累积稳定判据：飞机重启后 UAVSTATE 会中断再恢复，过渡期必须重新压住显示。
+    m_uavStateFrames = 0;
+    m_firstUavStateMs = 0;
     m_batteryVoltage = 0.0;
     m_batteryPercent = 0.0;
     m_altitude = 0.0;

@@ -57,6 +57,7 @@ class AppState : public QObject
     // 链路/就绪状态
     Q_PROPERTY(bool linkEstablished READ linkEstablished NOTIFY telemetryChanged)
     Q_PROPERTY(bool batteryValid READ batteryValid NOTIFY telemetryChanged)
+    Q_PROPERTY(bool telemetryStable READ telemetryStable NOTIFY telemetryChanged)
     Q_PROPERTY(bool allReady READ allReady NOTIFY telemetryChanged)
     Q_PROPERTY(int aircraftUptime READ aircraftUptime NOTIFY telemetryChanged)
     Q_PROPERTY(QVariantList readinessSteps READ readinessSteps NOTIFY telemetryChanged)
@@ -162,6 +163,7 @@ public:
     QString missionLogText() const;
     bool linkEstablished() const;
     bool batteryValid() const;
+    bool telemetryStable() const;
     bool allReady() const;
     int  aircraftUptime() const;
     QVariantList readinessSteps() const;
@@ -345,6 +347,7 @@ private:
     QString m_missionLogText;
     bool m_linkEstablished = false;
     bool m_batteryValid = false;
+    bool m_telemetryStable = false;
     bool m_allReady = false;
     int  m_aircraftUptime = 0;
     QVariantList m_readinessSteps;
