@@ -1145,6 +1145,13 @@ Item {
                 property bool goalVisible: false
 
                 // EGO 目标高度（米）。EGO 只取点击处的水平坐标，高度由地面站指定。
+                //
+                // 上限必须**低于**机载 ego_planner_odin.launch 里的 max_height(1.5)：
+                // 那个值同时是 grid_map 的 z 顶，而目标点落在地图外会被判为占据，
+                // 规划直接失败、traj_server 零输出（213 实测 z=2.5 时 position_cmd
+                // 一帧都没有）。留 0.1m 余量。
+                readonly property real goalAltMin: 0.5
+                readonly property real goalAltMax: 1.4
                 property real goalAlt: 1.2
 
                 readonly property string egoTaskId: "ego_planner_odin"
@@ -1413,7 +1420,7 @@ Item {
                                 Text { anchors.centerIn: parent; text: "−"; color: "#C9D1D9"; font.pixelSize: 11 }
                                 MouseArea {
                                     id: altDownMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: gridMapRoot.goalAlt = Math.max(0.5, gridMapRoot.goalAlt - 0.1)
+                                    onClicked: gridMapRoot.goalAlt = Math.max(gridMapRoot.goalAltMin, gridMapRoot.goalAlt - 0.1)
                                 }
                             }
                             Text {
@@ -1428,7 +1435,7 @@ Item {
                                 Text { anchors.centerIn: parent; text: "+"; color: "#C9D1D9"; font.pixelSize: 11 }
                                 MouseArea {
                                     id: altUpMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: gridMapRoot.goalAlt = Math.min(2.5, gridMapRoot.goalAlt + 0.1)
+                                    onClicked: gridMapRoot.goalAlt = Math.min(gridMapRoot.goalAltMax, gridMapRoot.goalAlt + 0.1)
                                 }
                             }
                         }
