@@ -12,9 +12,14 @@ class VoxelInstanceTable : public QQuick3DInstancing
     QML_ELEMENT
     Q_PROPERTY(TelemetryStore* store READ store WRITE setStore NOTIFY storeChanged)
     Q_PROPERTY(int voxelCount READ voxelCount NOTIFY voxelCountChanged)
+    // 配色高度带：色带在 [colorMinZ, colorMaxZ] 之间铺满，超出则钳到两端。
+    // 这个区间是**显示**用的，和下面的量化区间是两回事，不要混。
+    Q_PROPERTY(float colorMinZ READ colorMinZ WRITE setColorMinZ NOTIFY colorBandChanged)
+    Q_PROPERTY(float colorMaxZ READ colorMaxZ WRITE setColorMaxZ NOTIFY colorBandChanged)
 
 public:
-    // 体素高度量化区间，必须与机载 uav_basic_topic.cpp gridMapCb() 的 z_min/z_max 一致
+    // 体素高度**量化**区间，必须与机载 uav_basic_topic.cpp gridMapCb() 的
+    // z_min/z_max 一致，用于把 1 字节高度码还原成世界系 z。不是显示参数。
     static constexpr float kHeightMin = -0.5f;
     static constexpr float kHeightMax = 3.0f;
 
@@ -22,6 +27,21 @@ public:
 
     TelemetryStore* store() const { return m_store; }
     int voxelCount() const { return m_count; }
+    float colorMinZ() const { return m_colorMinZ; }
+    float colorMaxZ() const { return m_colorMaxZ; }
+
+    void setColorMinZ(float v) {
+        if (qFuzzyCompare(m_colorMinZ, v)) return;
+        m_colorMinZ = v;
+        emit colorBandChanged();
+        rebuild();
+    }
+    void setColorMaxZ(float v) {
+        if (qFuzzyCompare(m_colorMaxZ, v)) return;
+        m_colorMaxZ = v;
+        emit colorBandChanged();
+        rebuild();
+    }
 
     void setStore(TelemetryStore *s) {
         if (m_store == s) return;
@@ -35,6 +55,7 @@ public:
 signals:
     void storeChanged();
     void voxelCountChanged();
+    void colorBandChanged();
 
 public slots:
     void rebuild() { markDirty(); }
@@ -56,7 +77,11 @@ protected:
 
         // #Cube is 100x100x100 units. Scale factor to get 1-meter cube = 0.01.
         // Voxel side = resolution meters → scale = res * 0.01
-        const float cubeScale = res * 0.01f * 0.9f;
+        //
+        // 系数取 1.02 而不是原来的 0.9：留 10% 缝隙会让连续的墙渲染成一串独立小方块，
+        // 观感是"撒了一地confetti"而不是墙体。略微过盈可以让相邻格子接成面，
+        // 也顺带盖掉浮点误差造成的发丝缝。
+        const float cubeScale = res * 0.01f * 1.02f;
 
         QByteArray buf;
         int count = 0;
@@ -83,12 +108,22 @@ protected:
                 // 0.5m、整根柱子被压到 3.0/3.5 高。
                 float worldZ = kHeightMin + t * (kHeightMax - kHeightMin);
 
-                // height → color: blue → cyan → green → yellow → red
+                // 高度 → 颜色：蓝 → 青 → 绿 → 黄 → 红
+                //
+                // 归一化用的是**显示带** [colorMinZ, colorMaxZ]，不是量化区间。
+                // 之前直接拿量化出来的 t 上色，而量化区间是 [-0.5, 3.0]、实际内容
+                // 只到 1.5m，结果整张图挤在 t∈[0.14,0.57] 也就是蓝→绿这 40% 色带里，
+                // 黄和红永远不出现，高度差几乎看不出来。
+                const float span = (m_colorMaxZ - m_colorMinZ) > 1e-6f
+                                       ? (m_colorMaxZ - m_colorMinZ) : 1.0f;
+                float ct = (worldZ - m_colorMinZ) / span;
+                ct = ct < 0.0f ? 0.0f : (ct > 1.0f ? 1.0f : ct);
+
                 float cr, cg, cb;
-                if (t < 0.25f)      { float s = t/0.25f;          cr=0;   cg=s;   cb=1;   }
-                else if (t < 0.5f)  { float s=(t-0.25f)/0.25f;    cr=0;   cg=1;   cb=1-s; }
-                else if (t < 0.75f) { float s=(t-0.5f)/0.25f;     cr=s;   cg=1;   cb=0;   }
-                else                { float s=(t-0.75f)/0.25f;     cr=1;   cg=1-s; cb=0;   }
+                if (ct < 0.25f)      { float s = ct/0.25f;          cr=0;   cg=s;   cb=1;   }
+                else if (ct < 0.5f)  { float s=(ct-0.25f)/0.25f;    cr=0;   cg=1;   cb=1-s; }
+                else if (ct < 0.75f) { float s=(ct-0.5f)/0.25f;     cr=s;   cg=1;   cb=0;   }
+                else                 { float s=(ct-0.75f)/0.25f;    cr=1;   cg=1-s; cb=0;   }
 
                 // ENU→Qt3D: x=East, y=Up(Z), z=-North(-Y)
                 auto entry = calculateTableEntry(
@@ -121,5 +156,9 @@ private:
     }
 
     TelemetryStore *m_store = nullptr;
+    // 默认铺满 0~1.5m，即机载 max_height 限定的飞行包线。
+    // 改机载限高时这里要跟着改，否则色带又会用不满。
+    float m_colorMinZ = 0.0f;
+    float m_colorMaxZ = 1.5f;
     int m_count = 0;
 };
