@@ -21,6 +21,11 @@ namespace {
 constexpr char kMagic0 = 0x61;
 constexpr char kMagic1 = 0x6D;
 constexpr int kFrameOverhead = 10;
+// 栅格帧最坏 35378 字节（133×133 格 × 2 字节 RLE）+ MsgPack 头，取 40KB 留余量。
+constexpr quint32 kMaxPayloadSize = 40960;
+// 重组缓冲上限必须大于单帧最大长度，否则大栅格帧在慢链路上还没收全就被当成
+// "链路噪声" 清掉，表现为栅格永远不刷新。
+constexpr int kMaxBufferSize = 65536;
 }
 
 ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
@@ -523,8 +528,12 @@ ZenithProtocolClient::DecodedFrame ZenithProtocolClient::tryDecodeFrame(const QB
         | (static_cast<quint32>(static_cast<quint8>(buffer[4])) << 16)
         | (static_cast<quint32>(static_cast<quint8>(buffer[5])) << 24);
 
-    // Sanity check: Zenith frames should never exceed 8KB (grid map frames can be ~4KB).
-    if (payloadSize > 8192) {
+    // Sanity check. 上界由栅格帧决定，不是 8KB：机载 gridMapCb() 的窗口是
+    // 20m/0.15m = 133×133 = 17689 格，RLE 最坏情况每格一对 (value,run) = 35378 字节，
+    // 且机载侧不做任何截断。原来卡在 8192 会在障碍物一多时把整帧栅格丢掉，
+    // 而丢帧后只跳 2 字节重找 magic，RLE 二进制里撞上 0x61 0x6D 还会假同步、
+    // 连累后面几帧遥测 CRC 失败。
+    if (payloadSize > kMaxPayloadSize) {
         result.totalBytes = 2; // skip past false magic bytes
         return result;
     }
@@ -743,8 +752,8 @@ void ZenithProtocolClient::updateLinkStates()
 int ZenithProtocolClient::processBuffer(QByteArray &buffer)
 {
     int validFrames = 0;
-    // Guard: if buffer grows beyond 16KB, discard stale data (radio corruption recovery)
-    if (buffer.size() > 16384) {
+    // Guard: 缓冲异常增长时丢弃陈旧数据（链路噪声恢复）
+    if (buffer.size() > kMaxBufferSize) {
         appendLog(QString("Buffer overflow (%1 bytes), flushing").arg(buffer.size()));
         buffer.clear();
         return 0;

@@ -1144,6 +1144,28 @@ Item {
                 property real goalZ: 0
                 property bool goalVisible: false
 
+                // EGO 目标高度（米）。EGO 只取点击处的水平坐标，高度由地面站指定。
+                property real goalAlt: 1.2
+
+                readonly property string egoTaskId: "ego_planner_odin"
+                readonly property string egoTaskPath: "/home/jetson/task_ws/src/user_tasks/ego_planner_odin.launch"
+                readonly property bool egoRunning:
+                    appState.managedTaskActive && appState.managedTaskName === egoTaskId
+
+                function startEgo() {
+                    appState.startCustomManagedTask(egoTaskId, egoTaskPath)
+                }
+
+                // 目标点下发。机载 bridge 里没有 goal 的发布通道，只能借 CUSTOMMODE 的
+                // system() 在机上跑 rostopic pub。x/y/z 是 ENU（map 系）。
+                function sendGoal(enuX, enuY, enuZ) {
+                    var goalCmd = "rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
+                        + "'{header: {frame_id: \"world\"}, pose: {position: {x: "
+                        + enuX.toFixed(2) + ", y: " + enuY.toFixed(2) + ", z: " + enuZ.toFixed(2)
+                        + "}, orientation: {w: 1}}}'"
+                    appState.sendRemoteScript(goalCmd)
+                }
+
                 function updateCam() {
                     var yr = camYaw * Math.PI / 180
                     var pr = camPitch * Math.PI / 180
@@ -1309,20 +1331,12 @@ Item {
                             var result = gridView3d.pick(m.x, m.y)
                             if (result.objectHit) {
                                 var sp = result.scenePosition
-                                var enuX = sp.x
-                                var enuY = -sp.z
-                                var enuZ = appState.positionZ > 0.3 ? appState.positionZ : 1.0
+                                // Qt3D: X=East, Z=-North → ENU
                                 gridMapRoot.goalX = sp.x
                                 gridMapRoot.goalY = sp.z
+                                gridMapRoot.goalZ = gridMapRoot.goalAlt
                                 gridMapRoot.goalVisible = true
-
-                                var goalCmd = "rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
-                                    + "'{header: {frame_id: \"world\"}, pose: {position: {x: "
-                                    + enuX.toFixed(2) + ", y: " + enuY.toFixed(2) + ", z: " + enuZ.toFixed(2)
-                                    + "}, orientation: {w: 1}}}'"
-                                var triggerCmd = "rostopic pub -1 /traj_start_trigger geometry_msgs/PoseStamped "
-                                    + "'{header: {frame_id: \"world\"}, pose: {orientation: {w: 1}}}'"
-                                appState.sendRemoteScript(goalCmd + " && " + triggerCmd)
+                                gridMapRoot.sendGoal(sp.x, -sp.z, gridMapRoot.goalAlt)
                             }
                         }
                         btn = 0
@@ -1386,45 +1400,75 @@ Item {
                     anchors.bottom: parent.bottom; anchors.right: parent.right
                     anchors.margins: 8; spacing: 6; z: 10
 
-                    // EGO controls
+                    // 目标高度：EGO 只用点击位置的水平坐标，高度由这里给
                     Rectangle {
-                        width: egoRow.width + 16; height: 26; radius: 6; color: "#161B22CC"; border.color: "#30363D"
+                        width: altRow.width + 16; height: 26; radius: 6; color: "#161B22CC"; border.color: "#30363D"
                         Row {
-                            id: egoRow; anchors.centerIn: parent; spacing: 4
-                            Text { text: "EGO"; color: "#58A6FF"; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Repeater {
-                                model: [
-                                    { label: "Start", color: "#1A4A2E", cmd: "bash ~/opi-drone-cxr-demo/ego_start.sh" },
-                                    { label: "Stop",  color: "#6E1A1A", cmd: "bash ~/opi-drone-cxr-demo/ego_stop.sh" },
-                                    { label: "Restart", color: "#1A3A5C", cmd: "bash ~/opi-drone-cxr-demo/ego_restart.sh" }
-                                ]
-                                delegate: Rectangle {
-                                    width: btnLbl.width + 12; height: 18; radius: 3
-                                    color: btnMa.containsMouse ? Qt.lighter(modelData.color, 1.3) : modelData.color
-                                    Text { id: btnLbl; anchors.centerIn: parent; text: modelData.label; color: "#E6EDF3"; font.pixelSize: 9 }
-                                    MouseArea { id: btnMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appState.sendRemoteScript(modelData.cmd) }
+                            id: altRow; anchors.centerIn: parent; spacing: 4
+                            Text { text: "目标高度"; color: "#8B949E"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                            Rectangle {
+                                width: 16; height: 18; radius: 3
+                                color: altDownMa.containsMouse ? "#30363D" : "#21262D"
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { anchors.centerIn: parent; text: "−"; color: "#C9D1D9"; font.pixelSize: 11 }
+                                MouseArea {
+                                    id: altDownMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: gridMapRoot.goalAlt = Math.max(0.5, gridMapRoot.goalAlt - 0.1)
+                                }
+                            }
+                            Text {
+                                text: gridMapRoot.goalAlt.toFixed(1) + " m"
+                                color: "#E6EDF3"; font.pixelSize: 10; font.bold: true
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Rectangle {
+                                width: 16; height: 18; radius: 3
+                                color: altUpMa.containsMouse ? "#30363D" : "#21262D"
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { anchors.centerIn: parent; text: "+"; color: "#C9D1D9"; font.pixelSize: 11 }
+                                MouseArea {
+                                    id: altUpMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                    onClicked: gridMapRoot.goalAlt = Math.min(2.5, gridMapRoot.goalAlt + 0.1)
                                 }
                             }
                         }
                     }
 
-                    // FUEL controls (same layout, reserved)
+                    // EGO：走机载任务管理器（Managed Task API），不再下发 shell
                     Rectangle {
-                        width: fuelRow.width + 16; height: 26; radius: 6; color: "#161B22CC"; border.color: "#30363D"
+                        width: egoRow.width + 16; height: 26; radius: 6; color: "#161B22CC"
+                        border.color: gridMapRoot.egoRunning ? "#2EA043" : "#30363D"
                         Row {
-                            id: fuelRow; anchors.centerIn: parent; spacing: 4
-                            Text { text: "FUEL"; color: "#F0883E"; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                            Repeater {
-                                model: [
-                                    { label: "Start", color: "#1A4A2E", cmd: "bash -c 'source ~/opi-drone-cxr-demo/cxr_fuel_ws/devel/setup.bash && roslaunch exploration_manager exploration.launch --no-summary &'" },
-                                    { label: "Stop",  color: "#6E1A1A", cmd: "rosnode kill /exploration_node /fuel_nav 2>/dev/null" },
-                                    { label: "Restart", color: "#1A3A5C", cmd: "rosnode kill /exploration_node /fuel_nav 2>/dev/null; sleep 2; bash -c 'source ~/opi-drone-cxr-demo/cxr_fuel_ws/devel/setup.bash && roslaunch exploration_manager exploration.launch --no-summary &'" }
-                                ]
-                                delegate: Rectangle {
-                                    width: fuelLbl.width + 12; height: 18; radius: 3
-                                    color: fuelMa.containsMouse ? Qt.lighter(modelData.color, 1.3) : modelData.color
-                                    Text { id: fuelLbl; anchors.centerIn: parent; text: modelData.label; color: "#E6EDF3"; font.pixelSize: 9 }
-                                    MouseArea { id: fuelMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: appState.sendRemoteScript(modelData.cmd) }
+                            id: egoRow; anchors.centerIn: parent; spacing: 5
+                            Text { text: "EGO"; color: "#58A6FF"; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text {
+                                text: gridMapRoot.egoRunning ? appState.managedTaskState : "未启动"
+                                color: gridMapRoot.egoRunning ? "#3FB950" : "#6E7681"
+                                font.pixelSize: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Rectangle {
+                                width: startLbl.width + 12; height: 18; radius: 3
+                                readonly property bool canStart: appState.protocolConnected && !appState.managedTaskActive
+                                color: !canStart ? "#21262D" : (startMa.containsMouse ? Qt.lighter("#1A4A2E", 1.3) : "#1A4A2E")
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { id: startLbl; anchors.centerIn: parent; text: "启动"; color: parent.canStart ? "#E6EDF3" : "#6E7681"; font.pixelSize: 9 }
+                                MouseArea {
+                                    id: startMa; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: parent.canStart ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: if (parent.canStart) gridMapRoot.startEgo()
+                                }
+                            }
+                            Rectangle {
+                                width: stopLbl.width + 12; height: 18; radius: 3
+                                readonly property bool canStop: appState.protocolConnected && gridMapRoot.egoRunning
+                                color: !canStop ? "#21262D" : (stopMa.containsMouse ? Qt.lighter("#6E1A1A", 1.3) : "#6E1A1A")
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { id: stopLbl; anchors.centerIn: parent; text: "停止"; color: parent.canStop ? "#E6EDF3" : "#6E7681"; font.pixelSize: 9 }
+                                MouseArea {
+                                    id: stopMa; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: parent.canStop ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: if (parent.canStop) appState.stopManagedTask(gridMapRoot.egoTaskId)
                                 }
                             }
                         }

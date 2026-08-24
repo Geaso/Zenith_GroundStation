@@ -18,6 +18,13 @@
     "category": "跟踪"
   },
   {
+    "name": "EGO 自主避障导航",
+    "task_id": "ego_planner_odin",
+    "task_path": "/home/jetson/task_ws/src/user_tasks/ego_planner_odin.launch",
+    "note": "启动 EGO-Planner（ODIN 点云建图）+ traj_server + zenith_ego_bridge；启动后到 3D 栅格图点击目标点即可自主避障飞行",
+    "category": "导航"
+  },
+  {
     "name": "C10 AprilTag 精准降落",
     "task_id": "c10_apriltag_landing",
     "note": "快速启动 zenith_apriltag/c10_ground_landing_demo；降落由独立 FSM 管理",

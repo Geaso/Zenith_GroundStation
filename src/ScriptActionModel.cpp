@@ -103,10 +103,12 @@ bool ScriptActionModel::loadBuiltIns(const QString &path)
         if (name.isEmpty() || taskId.isEmpty()) {
             continue;
         }
+        // 内置任务可以带 task_path: 机载任务管理器的注册表里没有的任务（比如 EGO
+        // 那条 launch）必须靠绝对路径启动。留空则按注册表里的 task_id 启动。
         m_items.append({
             name,
             taskId,
-            QString(),
+            object.value(QStringLiteral("task_path")).toString().trimmed(),
             object.value(QStringLiteral("note")).toString(),
             object.value(QStringLiteral("category")).toString(QStringLiteral("任务")),
             QStringLiteral("Ready"),

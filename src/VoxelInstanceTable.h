@@ -11,9 +11,13 @@ class VoxelInstanceTable : public QQuick3DInstancing
     Q_OBJECT
     QML_ELEMENT
     Q_PROPERTY(TelemetryStore* store READ store WRITE setStore NOTIFY storeChanged)
-    Q_PROPERTY(int voxelCount READ voxelCount NOTIFY storeChanged)
+    Q_PROPERTY(int voxelCount READ voxelCount NOTIFY voxelCountChanged)
 
 public:
+    // 体素高度量化区间，必须与机载 uav_basic_topic.cpp gridMapCb() 的 z_min/z_max 一致
+    static constexpr float kHeightMin = -0.5f;
+    static constexpr float kHeightMax = 3.0f;
+
     explicit VoxelInstanceTable(QQuick3DObject *parent = nullptr) : QQuick3DInstancing(parent) {}
 
     TelemetryStore* store() const { return m_store; }
@@ -30,6 +34,7 @@ public:
 
 signals:
     void storeChanged();
+    void voxelCountChanged();
 
 public slots:
     void rebuild() { markDirty(); }
@@ -37,7 +42,7 @@ public slots:
 protected:
     QByteArray getInstanceBuffer(int *instanceCount) override {
         if (!m_store || !m_store->gridMapValid()) {
-            m_count = 0;
+            setVoxelCount(0);
             *instanceCount = 0;
             return {};
         }
@@ -72,7 +77,11 @@ protected:
                 float t = (cells[idx] - 1) / 254.0f;
                 float worldX = ox + (cx + 0.5f) * res;
                 float worldY = oy + (cy + 0.5f) * res;
-                float worldZ = t * 3.0f;
+                // 必须和机载 gridMapCb() 的量化区间一致：
+                //   norm = (pz - kHeightMin) / (kHeightMax - kHeightMin)
+                // 之前这里写的是 t * 3.0f，漏掉了 -0.5 的下界，导致低处体素整体上浮
+                // 0.5m、整根柱子被压到 3.0/3.5 高。
+                float worldZ = kHeightMin + t * (kHeightMax - kHeightMin);
 
                 // height → color: blue → cyan → green → yellow → red
                 float cr, cg, cb;
@@ -95,13 +104,22 @@ protected:
             }
         }
 
-        m_count = written;
+        setVoxelCount(written);
         *instanceCount = written;
         buf.resize(written * int(sizeof(InstanceTableEntry)));
         return buf;
     }
 
 private:
+    // getInstanceBuffer() 跑在渲染同步阶段，不能在这里同步改 QML 属性，
+    // 否则 HUD 的 binding 会在错误的线程/时机被求值。排队到事件循环里发。
+    void setVoxelCount(int n) {
+        if (m_count == n) return;
+        m_count = n;
+        QMetaObject::invokeMethod(this, [this] { emit voxelCountChanged(); },
+                                  Qt::QueuedConnection);
+    }
+
     TelemetryStore *m_store = nullptr;
     int m_count = 0;
 };

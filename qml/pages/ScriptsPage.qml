@@ -16,8 +16,37 @@ Item {
             customTaskConfirm.open()
         } else if (taskId === "c10_apriltag_landing") {
             landingConfirm.open()
+        } else if (taskId === "ego_planner_odin") {
+            egoConfirm.open()
+        } else if (taskPath.length > 0) {
+            // 内置但不在机载注册表里的任务，按绝对路径启动
+            appState.startCustomManagedTask(taskId, taskPath)
         } else {
             appState.startManagedTask(taskId)
+        }
+    }
+
+    Dialog {
+        id: egoConfirm
+        anchors.centerIn: parent
+        modal: true
+        title: "确认启动 EGO 自主避障导航"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: appState.startCustomManagedTask(
+                        root.pendingTaskId, root.pendingTaskPath)
+
+        contentItem: Text {
+            width: 470
+            wrapMode: Text.WordWrap
+            color: "#E6EDF3"
+            text: "该入口会启动 EGO-Planner（ODIN 点云建图）、traj_server 和 zenith_ego_bridge。\n\n"
+                  + "启动后飞机会持续接收规划出的位置指令；在 3D 栅格图里点击目标点，飞机将自主规划路径并避障飞过去。\n\n"
+                  + "请确认：飞行空域已清场、ODIN 点云正常、飞机已进入可接受外部指令的控制状态。"
+        }
+        background: Rectangle {
+            radius: 10
+            color: "#161B22"
+            border.color: "#8B5A2B"
         }
     }
 
@@ -440,7 +469,7 @@ Item {
                         }
                         Text {
                             width: parent.width
-                            visible: !builtIn
+                            visible: taskPath.length > 0
                             text: taskPath
                             color: "#6E7681"
                             font.pixelSize: 10
