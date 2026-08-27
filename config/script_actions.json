@@ -25,6 +25,13 @@
     "category": "导航"
   },
   {
+    "name": "SUPER 自主避障导航",
+    "task_id": "super_planner_odin",
+    "task_path": "/home/jetson/task_ws/src/user_tasks/super_planner_odin.launch",
+    "note": "启动 SUPER / ROG-Map + 消息适配 + 独立 Zenith bridge；不经过 EGO 1.5m 硬限高，复用 3D 栅格图目标点和体素地图交互",
+    "category": "导航"
+  },
+  {
     "name": "C10 AprilTag 精准降落",
     "task_id": "c10_apriltag_landing",
     "note": "快速启动 zenith_apriltag/c10_ground_landing_demo；降落由独立 FSM 管理",

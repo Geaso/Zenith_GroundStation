@@ -18,11 +18,39 @@ Item {
             landingConfirm.open()
         } else if (taskId === "ego_planner_odin") {
             egoConfirm.open()
+        } else if (taskId === "super_planner_odin") {
+            superConfirm.open()
         } else if (taskPath.length > 0) {
             // 内置但不在机载注册表里的任务，按绝对路径启动
             appState.startCustomManagedTask(taskId, taskPath)
         } else {
             appState.startManagedTask(taskId)
+        }
+    }
+
+    Dialog {
+        id: superConfirm
+        anchors.centerIn: parent
+        modal: true
+        title: "确认启动 SUPER 自主避障导航"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: appState.startCustomManagedTask(
+                        root.pendingTaskId, root.pendingTaskPath)
+
+        contentItem: Text {
+            width: 470
+            wrapMode: Text.WordWrap
+            color: "#E6EDF3"
+            text: "该入口会启动 SUPER / ROG-Map、消息兼容适配器和独立 Zenith bridge；不经过 EGO 的 1.5m 硬限高器。\n\n"
+                  + "启动任务本身不会让飞机动；只有切入 COMMAND_CONTROL 后，规划指令才会进入控制器。\n\n"
+                  + "启动后到 3D 栅格图查看 ROG-Map 体素，并点击目标点。SUPER 直接使用页面设置的目标高度。\n\n"
+                  + "当前近场过滤半径为 0.8m，尚未完成真实飞行闭环验证。请先确认体素地图、ODIN 点云和飞行空域正常。\n\n"
+                  + "停止时请使用「安全停止」；紧急情况下可拨回遥控器中位或执行降落。"
+        }
+        background: Rectangle {
+            radius: 10
+            color: "#161B22"
+            border.color: "#8B5A2B"
         }
     }
 

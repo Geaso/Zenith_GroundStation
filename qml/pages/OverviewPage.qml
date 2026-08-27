@@ -1144,33 +1144,53 @@ Item {
                 property real goalZ: 0
                 property bool goalVisible: false
 
-                // EGO 目标高度（米）。EGO 只取点击处的水平坐标，高度由地面站指定。
-                //
-                // 上限必须**低于**机载 ego_planner_odin.launch 里的 max_height(1.5)：
-                // 那个值同时是 grid_map 的 z 顶，而目标点落在地图外会被判为占据，
-                // 规划直接失败、traj_server 零输出（213 实测 z=2.5 时 position_cmd
-                // 一帧都没有）。留 0.1m 余量。
+                // EGO 保留 1.5m 任务层硬限高；SUPER 不经过该限幅器，并直接采用
+                // 地面站目标 z。SUPER 的 2.0m UI 上限来自当前 ROG-Map 有限栅格安全边界，
+                // 不是 EGO 的 1.5m 指令钳制。
                 readonly property real goalAltMin: 0.5
                 readonly property real goalAltMax: 1.4
+                readonly property real superGoalAltMax: 2.0
                 property real goalAlt: 1.2
+                readonly property real activeGoalAltMax: superRunning ? superGoalAltMax : goalAltMax
+                readonly property real effectiveGoalAlt: Math.min(goalAlt, activeGoalAltMax)
 
                 readonly property string egoTaskId: "ego_planner_odin"
                 readonly property string egoTaskPath: "/home/jetson/task_ws/src/user_tasks/ego_planner_odin.launch"
                 readonly property bool egoRunning:
                     appState.managedTaskActive && appState.managedTaskName === egoTaskId
+                readonly property string superTaskId: "super_planner_odin"
+                readonly property string superTaskPath: "/home/jetson/task_ws/src/user_tasks/super_planner_odin.launch"
+                readonly property bool superRunning:
+                    appState.managedTaskActive && appState.managedTaskName === superTaskId
+                readonly property bool plannerRunning: egoRunning || superRunning
 
                 function startEgo() {
                     appState.startCustomManagedTask(egoTaskId, egoTaskPath)
                 }
 
+                function startSuper() {
+                    appState.startCustomManagedTask(superTaskId, superTaskPath)
+                }
+
                 // 目标点下发。机载 bridge 里没有 goal 的发布通道，只能借 CUSTOMMODE 的
                 // system() 在机上跑 rostopic pub。x/y/z 是 ENU（map 系）。
+                //
+                // EGO 的 goal 和 trigger 必须**成对**下发，缺一不可：
+                // advanced_param_exp.xml 里 flag_realworld_experiment=true，EGO 的
+                // have_trigger_ 初始为 false，只收到 goal 会一直卡在 WAIT_TARGET，
+                // 既不规划也不报错 —— 表现就是"点了没反应"。/traj_start_trigger 只用
+                // 来置位，内容无所谓，给个单位四元数即可。
+                // SUPER 只订阅 /move_base_simple/goal，不发送 EGO 专用 trigger。
                 function sendGoal(enuX, enuY, enuZ) {
+                    if (!plannerRunning)
+                        return
                     var goalCmd = "rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
                         + "'{header: {frame_id: \"world\"}, pose: {position: {x: "
                         + enuX.toFixed(2) + ", y: " + enuY.toFixed(2) + ", z: " + enuZ.toFixed(2)
                         + "}, orientation: {w: 1}}}'"
-                    appState.sendRemoteScript(goalCmd)
+                    var triggerCmd = "rostopic pub -1 /traj_start_trigger geometry_msgs/PoseStamped "
+                        + "'{header: {frame_id: \"world\"}, pose: {orientation: {w: 1}}}'"
+                    appState.sendRemoteScript(egoRunning ? goalCmd + " && " + triggerCmd : goalCmd)
                 }
 
                 function updateCam() {
@@ -1341,9 +1361,9 @@ Item {
                                 // Qt3D: X=East, Z=-North → ENU
                                 gridMapRoot.goalX = sp.x
                                 gridMapRoot.goalY = sp.z
-                                gridMapRoot.goalZ = gridMapRoot.goalAlt
+                                gridMapRoot.goalZ = gridMapRoot.effectiveGoalAlt
                                 gridMapRoot.goalVisible = true
-                                gridMapRoot.sendGoal(sp.x, -sp.z, gridMapRoot.goalAlt)
+                                gridMapRoot.sendGoal(sp.x, -sp.z, gridMapRoot.effectiveGoalAlt)
                             }
                         }
                         btn = 0
@@ -1389,10 +1409,10 @@ Item {
                     }
                     Rectangle {
                         width: goalBtn.width + 12; height: 22; radius: 4
-                        color: gridMapRoot.goalMode ? "#1F6FEB" : (goalMa.containsMouse ? "#30363D" : "#21262DCC")
+                        color: !gridMapRoot.plannerRunning ? "#21262D88" : (gridMapRoot.goalMode ? "#1F6FEB" : (goalMa.containsMouse ? "#30363D" : "#21262DCC"))
                         border.color: gridMapRoot.goalMode ? "#58A6FF" : "transparent"
-                        Text { id: goalBtn; anchors.centerIn: parent; text: gridMapRoot.goalMode ? "Goal Mode ON" : "Set Goal"; color: gridMapRoot.goalMode ? "#FFF" : "#C9D1D9"; font.pixelSize: 10 }
-                        MouseArea { id: goalMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: gridMapRoot.goalMode = !gridMapRoot.goalMode }
+                        Text { id: goalBtn; anchors.centerIn: parent; text: gridMapRoot.goalMode ? "Goal Mode ON" : "Set Goal"; color: gridMapRoot.plannerRunning ? (gridMapRoot.goalMode ? "#FFF" : "#C9D1D9") : "#6E7681"; font.pixelSize: 10 }
+                        MouseArea { id: goalMa; anchors.fill: parent; hoverEnabled: true; enabled: gridMapRoot.plannerRunning; cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor; onClicked: gridMapRoot.goalMode = !gridMapRoot.goalMode }
                     }
                     Rectangle {
                         visible: gridMapRoot.goalVisible
@@ -1407,7 +1427,7 @@ Item {
                     anchors.bottom: parent.bottom; anchors.right: parent.right
                     anchors.margins: 8; spacing: 6; z: 10
 
-                    // 目标高度：EGO 只用点击位置的水平坐标，高度由这里给
+                    // 目标高度：EGO 受 1.5m 硬限高；SUPER 使用 ROG-Map 边界。
                     Rectangle {
                         width: altRow.width + 16; height: 26; radius: 6; color: "#161B22CC"; border.color: "#30363D"
                         Row {
@@ -1424,7 +1444,8 @@ Item {
                                 }
                             }
                             Text {
-                                text: gridMapRoot.goalAlt.toFixed(1) + " m"
+                                text: (gridMapRoot.superRunning ? "SUPER " : "")
+                                      + gridMapRoot.effectiveGoalAlt.toFixed(1) + " m"
                                 color: "#E6EDF3"; font.pixelSize: 10; font.bold: true
                                 anchors.verticalCenter: parent.verticalCenter
                             }
@@ -1435,7 +1456,7 @@ Item {
                                 Text { anchors.centerIn: parent; text: "+"; color: "#C9D1D9"; font.pixelSize: 11 }
                                 MouseArea {
                                     id: altUpMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                                    onClicked: gridMapRoot.goalAlt = Math.min(gridMapRoot.goalAltMax, gridMapRoot.goalAlt + 0.1)
+                                    onClicked: gridMapRoot.goalAlt = Math.min(gridMapRoot.activeGoalAltMax, gridMapRoot.goalAlt + 0.1)
                                 }
                             }
                         }
@@ -1476,6 +1497,46 @@ Item {
                                     id: stopMa; anchors.fill: parent; hoverEnabled: true
                                     cursorShape: parent.canStop ? Qt.PointingHandCursor : Qt.ArrowCursor
                                     onClicked: if (parent.canStop) appState.stopManagedTask(gridMapRoot.egoTaskId)
+                                }
+                            }
+                        }
+                    }
+
+                    // SUPER：与 EGO 共用 Managed Task API 和栅格图目标点入口。
+                    Rectangle {
+                        width: superRow.width + 16; height: 26; radius: 6; color: "#161B22CC"
+                        border.color: gridMapRoot.superRunning ? "#2EA043" : "#30363D"
+                        Row {
+                            id: superRow; anchors.centerIn: parent; spacing: 5
+                            Text { text: "SUPER · 无1.5m硬限高"; color: "#BC8CFF"; font.pixelSize: 10; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
+                            Text {
+                                text: gridMapRoot.superRunning ? appState.managedTaskState : "未启动"
+                                color: gridMapRoot.superRunning ? "#3FB950" : "#6E7681"
+                                font.pixelSize: 9
+                                anchors.verticalCenter: parent.verticalCenter
+                            }
+                            Rectangle {
+                                width: superStartLbl.width + 12; height: 18; radius: 3
+                                readonly property bool canStart: appState.protocolConnected && !appState.managedTaskActive
+                                color: !canStart ? "#21262D" : (superStartMa.containsMouse ? Qt.lighter("#3A275A", 1.3) : "#3A275A")
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { id: superStartLbl; anchors.centerIn: parent; text: "启动"; color: parent.canStart ? "#E6EDF3" : "#6E7681"; font.pixelSize: 9 }
+                                MouseArea {
+                                    id: superStartMa; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: parent.canStart ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: if (parent.canStart) gridMapRoot.startSuper()
+                                }
+                            }
+                            Rectangle {
+                                width: superStopLbl.width + 12; height: 18; radius: 3
+                                readonly property bool canStop: appState.protocolConnected && gridMapRoot.superRunning
+                                color: !canStop ? "#21262D" : (superStopMa.containsMouse ? Qt.lighter("#6E1A1A", 1.3) : "#6E1A1A")
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text { id: superStopLbl; anchors.centerIn: parent; text: "停止"; color: parent.canStop ? "#E6EDF3" : "#6E7681"; font.pixelSize: 9 }
+                                MouseArea {
+                                    id: superStopMa; anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: parent.canStop ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: if (parent.canStop) appState.stopManagedTask(gridMapRoot.superTaskId)
                                 }
                             }
                         }
