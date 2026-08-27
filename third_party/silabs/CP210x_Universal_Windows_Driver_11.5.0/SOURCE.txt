@@ -1,0 +1,9 @@
+Component: Silicon Labs CP210x Universal Windows Driver
+Version: 11.5.0 (DriverVer 12/10/2025, 11.5.0.417)
+Downloaded: 2026-08-23
+Source page: https://www.silabs.com/software-and-tools/usb-to-uart-bridge-vcp-drivers
+Archive URL: https://www.silabs.com/documents/public/software/CP210x_Universal_Windows_Driver.zip
+Archive SHA256: 7CBA499E944F0CD6C6DE4A3C80A4646E9B0307D6704BCFA155A11F05774345E8
+
+The files from the upstream archive are included without modification.
+See SLAB_License_Agreement_VCP_Windows.txt for license terms.
