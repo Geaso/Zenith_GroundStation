@@ -73,6 +73,10 @@ ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
     connect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
     connect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
 
+    m_radioPairingTimer.setSingleShot(true);
+    connect(&m_radioPairingTimer, &QTimer::timeout,
+            this, &ZenithProtocolClient::onRadioPairingTimeout);
+
     // ModeSelection ACK timeout
     m_modeSelectionAckTimer.setSingleShot(true);
     connect(&m_modeSelectionAckTimer, &QTimer::timeout, this, [this]() {
@@ -109,7 +113,8 @@ bool ZenithProtocolClient::isConnected() const
     if (m_transportMode == TransportMode::Serial) {
         // An open COM handle is not a usable aircraft link. After every open or
         // reopen, wait for a new CRC-valid frame before exposing "connected".
-        return m_serialPort.isOpen() && m_serialHasValidFrameSinceOpen && telemetryFresh();
+        return m_serialPort.isOpen() && radioPairingReady()
+            && m_serialHasValidFrameSinceOpen && telemetryFresh();
     }
     return m_tcpSocket.state() == QAbstractSocket::ConnectedState;
 }
@@ -137,7 +142,8 @@ bool ZenithProtocolClient::heartbeatFresh() const
 bool ZenithProtocolClient::canSendControlCommands() const
 {
     if (m_transportMode == TransportMode::Serial) {
-        return m_active && m_serialPort.isOpen() && telemetryFresh();
+        return m_active && m_serialPort.isOpen() && radioPairingReady()
+            && telemetryFresh();
     }
     return m_active
         && m_tcpSocket.state() == QAbstractSocket::ConnectedState
@@ -370,7 +376,7 @@ void ZenithProtocolClient::onReconnectTimer()
 void ZenithProtocolClient::onHeartbeatTimer()
 {
     if (m_transportMode == TransportMode::Serial) {
-        if (!m_serialPort.isOpen()) {
+        if (!m_serialPort.isOpen() || !radioPairingReady()) {
             return;
         }
         QVariantMap payload;
@@ -399,8 +405,8 @@ void ZenithProtocolClient::onHeartbeatTimer()
 void ZenithProtocolClient::sendTcpMessage(int msgId, const QVariantMap &payload, int robotId)
 {
     if (m_transportMode == TransportMode::Serial) {
-        if (!m_serialPort.isOpen()) {
-            appendLog("Serial send skipped: port not open");
+        if (!m_serialPort.isOpen() || !radioPairingReady()) {
+            appendLog("Serial send blocked until LR24 pairing is ready");
             updateLinkStates();
             return;
         }
@@ -434,8 +440,8 @@ void ZenithProtocolClient::sendTcpMessage(int msgId, const QVariantMap &payload,
 void ZenithProtocolClient::sendUdpMessage(int msgId, const QVariantMap &payload, int robotId)
 {
     if (m_transportMode == TransportMode::Serial) {
-        if (!m_serialPort.isOpen()) {
-            appendLog("Serial send skipped: port not open");
+        if (!m_serialPort.isOpen() || !radioPairingReady()) {
+            appendLog("Serial send blocked until LR24 pairing is ready");
             return;
         }
         const QByteArray packet = packFrame(msgId, robotId, payload);
@@ -620,7 +626,7 @@ void ZenithProtocolClient::updateLinkStates()
             && !m_serialHasValidFrameSinceOpen
             && m_serialOpenedAtMs > 0
             && (now - m_serialOpenedAtMs) > kSerialStaleReconnectMs;
-        if (m_active && m_serialPort.isOpen()
+        if (m_active && m_serialPort.isOpen() && radioPairingReady()
             && (validDataTimedOut || firstFrameAfterReconnectTimedOut)) {
             m_serialDataInterrupted = true;
             scheduleSerialReconnect(validDataTimedOut
@@ -636,6 +642,10 @@ void ZenithProtocolClient::updateLinkStates()
         QString serialState;
         if (!m_active) {
             serialState = QStringLiteral("IDLE");
+        } else if (portOpen && m_radioPairingStage == RadioPairingStage::Failed) {
+            serialState = QStringLiteral("PAIRING_ERROR");
+        } else if (portOpen && !radioPairingReady()) {
+            serialState = QStringLiteral("PAIRING");
         } else if (portOpen && fresh) {
             serialState = QStringLiteral("CONNECTED");
         } else if (portOpen && lastRx > 0) {
@@ -653,7 +663,11 @@ void ZenithProtocolClient::updateLinkStates()
 
         QString overallState = QStringLiteral("STOPPED");
         if (m_active) {
-            if (portOpen && fresh && !m_awaitingModeSelectionAck) {
+            if (portOpen && m_radioPairingStage == RadioPairingStage::Failed) {
+                overallState = QStringLiteral("PAIRING_ERROR");
+            } else if (portOpen && !radioPairingReady()) {
+                overallState = QStringLiteral("PAIRING");
+            } else if (portOpen && fresh && !m_awaitingModeSelectionAck) {
                 overallState = QStringLiteral("CONNECTED");
             } else if (portOpen && m_awaitingModeSelectionAck) {
                 overallState = QStringLiteral("HANDSHAKING");
@@ -669,8 +683,10 @@ void ZenithProtocolClient::updateLinkStates()
             return QString::number((now - ts) / 1000.0, 'f', 1) + QStringLiteral("s");
         };
 
-        m_connectionSummary = QString("%1 | SERIAL=%2(last=%3)")
-            .arg(overallState, serialState, ageText(lastRx));
+        m_connectionSummary = QString("%1 | SERIAL=%2(last=%3) | LR24=%4 target=%5 actual=%6")
+            .arg(overallState, serialState, ageText(lastRx), radioPairingState())
+            .arg(m_radioTargetAddress)
+            .arg(radioActualAddressText());
         emit transportStateChanged(m_connectionSummary);
         emit linkStatesChanged();
         return;
@@ -846,6 +862,430 @@ qint64 ZenithProtocolClient::nowMs() const
 }
 
 // ---------------------------------------------------------------------------
+// LR24 local address pairing
+// ---------------------------------------------------------------------------
+int ZenithProtocolClient::radioTargetAddress() const { return m_radioTargetAddress; }
+int ZenithProtocolClient::radioActualAddress() const { return m_radioActualAddress; }
+QString ZenithProtocolClient::radioPairingErrorCode() const { return m_radioPairingErrorCode; }
+QString ZenithProtocolClient::radioPairingErrorText() const { return m_radioPairingErrorText; }
+
+void ZenithProtocolClient::setRadioTargetAddress(int address)
+{
+    if (address != 0 && !Lr24RadioProtocol::isFleetAddressAssignable(address)) {
+        failRadioPairing(QStringLiteral("PAIRING_INVALID_TARGET"),
+                         QStringLiteral("数传目标地址必须在 1–254 之间"));
+        return;
+    }
+    if (m_radioTargetAddress == address) {
+        return;
+    }
+    m_radioTargetAddress = address;
+    emit radioPairingChanged();
+}
+
+QString ZenithProtocolClient::radioActualAddressText() const
+{
+    if (m_radioActualAddress < 0) {
+        return QStringLiteral("—");
+    }
+    if (m_radioActualAddress == Lr24RadioProtocol::UnpairedAddress) {
+        return QStringLiteral("未配对（1000）");
+    }
+    return QString::number(m_radioActualAddress);
+}
+
+QString ZenithProtocolClient::radioPairingState() const
+{
+    switch (m_radioPairingStage) {
+    case RadioPairingStage::Idle: return QStringLiteral("IDLE");
+    case RadioPairingStage::Settling: return QStringLiteral("SETTLING");
+    case RadioPairingStage::WaitingHeartbeat: return QStringLiteral("IDENTIFYING");
+    case RadioPairingStage::WaitingInitialRead: return QStringLiteral("READING");
+    case RadioPairingStage::WaitingSetAck: return QStringLiteral("WRITING");
+    case RadioPairingStage::WaitingWriteDelay: return QStringLiteral("WRITING");
+    case RadioPairingStage::WaitingVerify: return QStringLiteral("VERIFYING");
+    case RadioPairingStage::Ready: return QStringLiteral("READY");
+    case RadioPairingStage::Failed: return QStringLiteral("ERROR");
+    }
+    return QStringLiteral("ERROR");
+}
+
+QString ZenithProtocolClient::radioPairingStateText() const
+{
+    switch (m_radioPairingStage) {
+    case RadioPairingStage::Idle: return QStringLiteral("等待串口连接");
+    case RadioPairingStage::Settling: return QStringLiteral("等待数传就绪");
+    case RadioPairingStage::WaitingHeartbeat: return QStringLiteral("正在识别本地数传");
+    case RadioPairingStage::WaitingInitialRead: return QStringLiteral("正在读取当前数传地址");
+    case RadioPairingStage::WaitingSetAck: return QStringLiteral("正在下发目标地址并等待确认");
+    case RadioPairingStage::WaitingWriteDelay: return QStringLiteral("正在下发目标地址");
+    case RadioPairingStage::WaitingVerify: return QStringLiteral("正在回读确认地址");
+    case RadioPairingStage::Ready: return QStringLiteral("数传地址配对完成");
+    case RadioPairingStage::Failed:
+        return m_radioPairingErrorText.isEmpty()
+            ? QStringLiteral("数传地址配对失败") : m_radioPairingErrorText;
+    }
+    return QStringLiteral("数传地址状态未知");
+}
+
+bool ZenithProtocolClient::radioPairingReady() const
+{
+    return m_radioPairingStage == RadioPairingStage::Ready;
+}
+
+bool ZenithProtocolClient::radioAddressMatchesTarget() const
+{
+    return m_radioActualAddress > 0
+        && m_radioActualAddress == m_radioTargetAddress;
+}
+
+void ZenithProtocolClient::setRadioPairingStage(RadioPairingStage stage)
+{
+    if (m_radioPairingStage == stage) {
+        return;
+    }
+    m_radioPairingStage = stage;
+    emit radioPairingChanged();
+    emit linkStatesChanged();
+}
+
+void ZenithProtocolClient::resetRadioPairing(bool clearActualAddress)
+{
+    m_radioPairingTimer.stop();
+    m_radioConfigParser.reset();
+    m_radioCurrentParameters.clear();
+    m_radioProductModel = 0;
+    m_radioSystemId = 0;
+    m_radioPairingAttempts = 0;
+    m_radioLastParseError.clear();
+    m_radioPairingErrorCode.clear();
+    m_radioPairingErrorText.clear();
+    if (clearActualAddress) {
+        m_radioActualAddress = -1;
+    }
+    setRadioPairingStage(RadioPairingStage::Idle);
+    emit radioPairingChanged();
+}
+
+void ZenithProtocolClient::beginRadioPairing()
+{
+    m_modeSelectionAckTimer.stop();
+    m_awaitingModeSelectionAck = false;
+    m_serialRecvBuffer.clear();
+    resetFreshness();
+    m_serialHasValidFrameSinceOpen = false;
+    m_serialOpenedAtMs = 0;
+
+    if (!Lr24RadioProtocol::isFleetAddressAssignable(m_radioTargetAddress)) {
+        failRadioPairing(QStringLiteral("PAIRING_NO_TARGET"),
+                         QStringLiteral("未选择有效的数传配对项（地址需为 1–254）"));
+        return;
+    }
+
+    m_radioConfigParser.reset();
+    m_radioCurrentParameters.clear();
+    m_radioActualAddress = -1;
+    m_radioProductModel = 0;
+    m_radioSystemId = 0;
+    m_radioPairingAttempts = 0;
+    m_radioLastParseError.clear();
+    m_radioPairingErrorCode.clear();
+    m_radioPairingErrorText.clear();
+    setRadioPairingStage(RadioPairingStage::Settling);
+    appendLog(QStringLiteral("LR24 pairing start: target=%1").arg(m_radioTargetAddress));
+    m_radioPairingTimer.start(kRadioOpenSettleMs);
+    emit radioPairingChanged();
+}
+
+bool ZenithProtocolClient::reapplyRadioPairing()
+{
+    if (!m_active || m_transportMode != TransportMode::Serial || !m_serialPort.isOpen()) {
+        failRadioPairing(QStringLiteral("PAIRING_PORT_NOT_OPEN"),
+                         QStringLiteral("串口未打开，无法重新下发数传地址"));
+        return false;
+    }
+    beginRadioPairing();
+    return m_radioPairingStage != RadioPairingStage::Failed;
+}
+
+void ZenithProtocolClient::sendRadioConfigHeartbeat()
+{
+    QString error;
+    const QByteArray bytes = Lr24RadioProtocol::makeHostHeartbeat(
+        m_radioConfigSequence++, static_cast<quint32>(nowMs() & 0xFFFFFFFF), 0, &error);
+    if (bytes.isEmpty()) {
+        failRadioPairing(QStringLiteral("PAIRING_HEARTBEAT_BUILD_FAILED"), error);
+        return;
+    }
+    if (writeSerial(bytes) != bytes.size()) {
+        failRadioPairing(QStringLiteral("PAIRING_WRITE_FAILED"),
+                         QStringLiteral("数传配置心跳写入不完整"));
+    }
+}
+
+void ZenithProtocolClient::sendRadioGetAddress()
+{
+    QString error;
+    const QByteArray bytes = Lr24RadioProtocol::makeGetAddressCommand(
+        m_radioProductModel, m_radioSystemId, m_radioConfigSequence++, &error);
+    if (bytes.isEmpty()) {
+        failRadioPairing(QStringLiteral("PAIRING_GET_BUILD_FAILED"), error);
+        return;
+    }
+    if (writeSerial(bytes) != bytes.size()) {
+        failRadioPairing(QStringLiteral("PAIRING_WRITE_FAILED"),
+                         QStringLiteral("数传地址查询写入不完整"));
+    }
+}
+
+void ZenithProtocolClient::sendRadioSetAddress()
+{
+    QString error;
+    const QByteArray bytes = Lr24RadioProtocol::makeSetAddressCommand(
+        m_radioProductModel, m_radioSystemId, m_radioConfigSequence++,
+        m_radioCurrentParameters, static_cast<quint16>(m_radioTargetAddress), &error);
+    if (bytes.isEmpty()) {
+        failRadioPairing(QStringLiteral("PAIRING_SET_BUILD_FAILED"), error);
+        return;
+    }
+    if (writeSerial(bytes) != bytes.size()) {
+        failRadioPairing(QStringLiteral("PAIRING_WRITE_FAILED"),
+                         QStringLiteral("数传地址设置写入不完整"));
+    }
+}
+
+void ZenithProtocolClient::onRadioPairingTimeout()
+{
+    const auto failForParseError = [this]() {
+        if (m_radioLastParseError.isEmpty()) {
+            return false;
+        }
+        failRadioPairing(QStringLiteral("PAIRING_FRAME_INVALID"),
+                         QStringLiteral("数传配置帧解析失败：%1").arg(m_radioLastParseError));
+        return true;
+    };
+
+    switch (m_radioPairingStage) {
+    case RadioPairingStage::Settling:
+        m_radioPairingAttempts = 0;
+        setRadioPairingStage(RadioPairingStage::WaitingHeartbeat);
+        sendRadioConfigHeartbeat();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        break;
+    case RadioPairingStage::WaitingHeartbeat:
+        if (m_radioPairingAttempts >= kRadioHeartbeatAttempts) {
+            if (failForParseError()) break;
+            failRadioPairing(QStringLiteral("PAIRING_HEARTBEAT_TIMEOUT"),
+                             QStringLiteral("未收到本地 LR24 心跳，请检查波特率和设备连接"));
+            break;
+        }
+        sendRadioConfigHeartbeat();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        break;
+    case RadioPairingStage::WaitingInitialRead:
+        if (m_radioPairingAttempts >= kRadioQueryAttempts) {
+            if (failForParseError()) break;
+            failRadioPairing(QStringLiteral("PAIRING_READ_TIMEOUT"),
+                             QStringLiteral("读取当前数传地址超时"));
+            break;
+        }
+        sendRadioConfigHeartbeat();
+        sendRadioGetAddress();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        break;
+    case RadioPairingStage::WaitingSetAck:
+        if (m_radioPairingAttempts >= kRadioQueryAttempts) {
+            if (failForParseError()) break;
+            failRadioPairing(QStringLiteral("PAIRING_SET_ACK_TIMEOUT"),
+                             QStringLiteral("下发数传地址后未收到匹配的写入确认"));
+            break;
+        }
+        sendRadioSetAddress();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        break;
+    case RadioPairingStage::WaitingWriteDelay:
+        m_radioPairingAttempts = 0;
+        setRadioPairingStage(RadioPairingStage::WaitingVerify);
+        sendRadioGetAddress();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        break;
+    case RadioPairingStage::WaitingVerify:
+        if (m_radioPairingAttempts >= kRadioQueryAttempts) {
+            if (failForParseError()) break;
+            failRadioPairing(QStringLiteral("PAIRING_VERIFY_TIMEOUT"),
+                             QStringLiteral("数传地址写入后回读确认超时"));
+            break;
+        }
+        sendRadioConfigHeartbeat();
+        sendRadioGetAddress();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        break;
+    default:
+        break;
+    }
+}
+
+void ZenithProtocolClient::handleRadioConfigFrame(const Lr24RadioProtocol::Frame &frame)
+{
+    if (frame.deviceId == Lr24RadioProtocol::RadioDeviceId
+        && frame.messageId == Lr24RadioProtocol::HeartbeatMessageId
+        && (m_radioPairingStage == RadioPairingStage::WaitingHeartbeat
+            || m_radioPairingStage == RadioPairingStage::Settling)) {
+        Lr24RadioProtocol::RadioHeartbeat heartbeat;
+        QString error;
+        if (!Lr24RadioProtocol::decodeRadioHeartbeat(frame, &heartbeat, &error)) {
+            failRadioPairing(QStringLiteral("PAIRING_HEARTBEAT_INVALID"), error);
+            return;
+        }
+        if (heartbeat.productModel != 2 && heartbeat.productModel != 32
+            && heartbeat.productModel != 33 && heartbeat.productModel != 34) {
+            failRadioPairing(QStringLiteral("PAIRING_UNSUPPORTED_MODEL"),
+                             QStringLiteral("检测到不支持的数传型号 %1").arg(heartbeat.productModel));
+            return;
+        }
+        m_radioProductModel = heartbeat.productModel;
+        m_radioSystemId = heartbeat.systemId;
+        m_radioPairingAttempts = 0;
+        setRadioPairingStage(RadioPairingStage::WaitingInitialRead);
+        sendRadioGetAddress();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        return;
+    }
+
+    if (frame.deviceId != Lr24RadioProtocol::RadioDeviceId
+        || frame.messageId != Lr24RadioProtocol::CommandAckMessageId) {
+        return;
+    }
+
+    if (m_radioPairingStage == RadioPairingStage::WaitingInitialRead) {
+        quint16 address = 0;
+        QByteArray parameters;
+        QString error;
+        if (!Lr24RadioProtocol::decodeAddressResponse(
+                frame, m_radioProductModel, &address, &parameters, &error)) {
+            failRadioPairing(QStringLiteral("PAIRING_READ_ACK_INVALID"), error);
+            return;
+        }
+        m_radioPairingTimer.stop();
+        m_radioActualAddress = address;
+        m_radioCurrentParameters = parameters;
+        emit radioPairingChanged();
+
+        m_radioPairingAttempts = 0;
+        setRadioPairingStage(RadioPairingStage::WaitingSetAck);
+        sendRadioSetAddress();
+        ++m_radioPairingAttempts;
+        if (m_radioPairingStage != RadioPairingStage::Failed)
+            m_radioPairingTimer.start(kRadioRetryIntervalMs);
+        return;
+    }
+
+    if (m_radioPairingStage == RadioPairingStage::WaitingSetAck) {
+        Lr24RadioProtocol::CommandAck ack;
+        QString error;
+        if (!Lr24RadioProtocol::decodeCommandAck(frame, &ack, &error)) {
+            failRadioPairing(QStringLiteral("PAIRING_SET_ACK_INVALID"), error);
+            return;
+        }
+        const quint16 expected = Lr24RadioProtocol::setParametersCommand(m_radioProductModel);
+        if (ack.commandId != expected) {
+            // A delayed GET reply can legally cross the SET write after a GET
+            // retry. Ignore only that known stale reply; diagnose all others.
+            if (ack.commandId == Lr24RadioProtocol::getParametersCommand(m_radioProductModel)) {
+                return;
+            }
+            failRadioPairing(QStringLiteral("PAIRING_SET_ACK_MISMATCH"),
+                             QStringLiteral("数传写入确认命令号不匹配：收到 %1，期望 %2")
+                                 .arg(ack.commandId).arg(expected));
+            return;
+        }
+        m_radioPairingTimer.stop();
+        m_radioPairingAttempts = 0;
+        setRadioPairingStage(RadioPairingStage::WaitingWriteDelay);
+        m_radioPairingTimer.start(kRadioWriteSettleMs);
+        return;
+    }
+
+    if (m_radioPairingStage == RadioPairingStage::WaitingVerify) {
+        quint16 address = 0;
+        QString error;
+        if (!Lr24RadioProtocol::decodeAddressResponse(
+                frame, m_radioProductModel, &address, nullptr, &error)) {
+            Lr24RadioProtocol::CommandAck ack;
+            QString ackError;
+            if (Lr24RadioProtocol::decodeCommandAck(frame, &ack, &ackError)
+                && ack.commandId == Lr24RadioProtocol::setParametersCommand(m_radioProductModel)) {
+                // A duplicate SET confirmation can arrive after the settling
+                // delay. It is harmless; keep waiting for the GET response.
+                return;
+            }
+            failRadioPairing(QStringLiteral("PAIRING_VERIFY_ACK_INVALID"), error);
+            return;
+        }
+        m_radioActualAddress = address;
+        emit radioPairingChanged();
+        if (address == m_radioTargetAddress) {
+            completeRadioPairing();
+        } else {
+            failRadioPairing(QStringLiteral("PAIRING_VERIFY_MISMATCH"),
+                             QStringLiteral("数传地址回读不一致：目标 %1，实际 %2")
+                                 .arg(m_radioTargetAddress).arg(address));
+        }
+    }
+}
+
+void ZenithProtocolClient::completeRadioPairing()
+{
+    m_radioPairingTimer.stop();
+    m_radioConfigParser.reset();
+    m_serialRecvBuffer.clear();
+    m_radioPairingErrorCode.clear();
+    m_radioPairingErrorText.clear();
+    m_serialOpenedAtMs = nowMs();
+    m_serialHasValidFrameSinceOpen = false;
+    m_serialDataInterrupted = false;
+    setRadioPairingStage(RadioPairingStage::Ready);
+    appendLog(QStringLiteral("LR24 pairing verified: address=%1 model=%2")
+                  .arg(m_radioActualAddress).arg(m_radioProductModel));
+
+    m_pendingModeSelection = false;
+    m_awaitingModeSelectionAck = true;
+    m_modeSelectionRetries = 0;
+    sendModeSelection(true);
+    m_modeSelectionAckTimer.start(kModeSelectionAckTimeoutMs);
+    updateLinkStates();
+}
+
+void ZenithProtocolClient::failRadioPairing(const QString &code, const QString &message)
+{
+    m_radioPairingTimer.stop();
+    m_radioPairingErrorCode = code;
+    m_radioPairingErrorText = message.isEmpty()
+        ? QStringLiteral("数传地址配对失败") : message;
+    m_serialOpenedAtMs = 0;
+    m_serialHasValidFrameSinceOpen = false;
+    m_serialRecvBuffer.clear();
+    setRadioPairingStage(RadioPairingStage::Failed);
+    appendLog(QStringLiteral("LR24 pairing failed [%1]: %2")
+                  .arg(m_radioPairingErrorCode, m_radioPairingErrorText));
+    updateLinkStates();
+}
+
+// ---------------------------------------------------------------------------
 // Serial transport
 // ---------------------------------------------------------------------------
 void ZenithProtocolClient::startSerial()
@@ -856,6 +1296,7 @@ void ZenithProtocolClient::startSerial()
 void ZenithProtocolClient::stopSerial()
 {
     m_reconnectTimer.stop();
+    resetRadioPairing(true);
     m_serialClosing = true;
     if (m_serialPort.isOpen()) {
         m_serialPort.close();
@@ -889,6 +1330,7 @@ void ZenithProtocolClient::openSerial(bool reconnectAttempt)
     m_serialHasValidFrameSinceOpen = false;
     m_serialActualPortName = portName;
     m_serialOpenedAtMs = 0;
+    resetRadioPairing(true);
 
     m_serialPort.setPortName(portName);
     m_serialPort.setBaudRate(m_serialBaudRate);
@@ -905,17 +1347,15 @@ void ZenithProtocolClient::openSerial(bool reconnectAttempt)
             rememberSerialIdentity(portName, info);
         }
         m_serialOpening = false;
-        m_serialOpenedAtMs = nowMs();
+        // Normal Zenith traffic starts only after the local LR24 address has
+        // been read, written and verified. Pairing owns the COM port until then.
+        m_serialOpenedAtMs = 0;
         appendLog(QString("Serial port opened: %1 @ %2%3")
             .arg(portName)
             .arg(m_serialBaudRate)
             .arg(reconnectAttempt ? QStringLiteral(" (reconnected, waiting for fresh data)") : QString()));
 
-        m_pendingModeSelection = true;
-        m_awaitingModeSelectionAck = true;
-        m_modeSelectionRetries = 0;
-        sendModeSelection(true);
-        m_modeSelectionAckTimer.start(kModeSelectionAckTimeoutMs);
+        beginRadioPairing();
         emit serialPortNameChanged();
         emit linkStatesChanged();
         return;
@@ -934,6 +1374,7 @@ void ZenithProtocolClient::scheduleSerialReconnect(const QString &reason)
 
     m_modeSelectionAckTimer.stop();
     m_awaitingModeSelectionAck = false;
+    resetRadioPairing(true);
     m_serialClosing = true;
     if (m_serialPort.isOpen()) {
         m_serialPort.close();
@@ -1111,7 +1552,34 @@ void ZenithProtocolClient::onSerialReadyRead()
 {
     const QByteArray bytes = m_serialPort.readAll();
     m_serialRxBytes += static_cast<quint64>(bytes.size());
-    m_serialRecvBuffer.append(bytes);
+
+    int normalDataOffset = 0;
+    if (!radioPairingReady()) {
+        // Feed incrementally so that if the final GET_ACK and the first Zenith
+        // telemetry frame share one readAll() chunk, bytes after the ACK remain
+        // available to the normal decoder instead of being discarded as noise.
+        while (normalDataOffset < bytes.size() && !radioPairingReady()) {
+            const auto events = m_radioConfigParser.append(bytes.mid(normalDataOffset, 1));
+            ++normalDataOffset;
+            for (const Lr24RadioProtocol::ParseEvent &event : events) {
+                if (event.type == Lr24RadioProtocol::ParseEvent::Type::FrameDecoded) {
+                    handleRadioConfigFrame(event.frame);
+                } else if (event.error.contains(QStringLiteral("校验和错误"))
+                           || event.error.contains(QStringLiteral("负载长度"))) {
+                    m_radioLastParseError = event.error;
+                    appendLog(QStringLiteral("LR24 config parse error: %1").arg(event.error));
+                }
+            }
+        }
+        if (!radioPairingReady()) {
+            return;
+        }
+    }
+
+    m_serialRecvBuffer.append(normalDataOffset > 0 ? bytes.mid(normalDataOffset) : bytes);
+    if (m_serialRecvBuffer.isEmpty()) {
+        return;
+    }
 
     // Only CRC-valid decoded frames make a newly opened/reopened link ready.
     if (processBuffer(m_serialRecvBuffer) > 0) {
@@ -1222,6 +1690,10 @@ QString ZenithProtocolClient::serialConnectionState() const
     bool ambiguous = false;
     const bool detected = !resolveSerialPort(&ambiguous).isEmpty();
     if (!m_active) return detected ? QStringLiteral("DETECTED") : QStringLiteral("NOT_DETECTED");
+    if (m_serialPort.isOpen() && m_radioPairingStage == RadioPairingStage::Failed)
+        return QStringLiteral("PAIRING_FAILED");
+    if (m_serialPort.isOpen() && !radioPairingReady())
+        return QStringLiteral("PAIRING");
     if (m_serialPort.isOpen() && m_serialHasValidFrameSinceOpen && telemetryFresh()) return QStringLiteral("COMMUNICATING");
     if (m_serialPort.isOpen()) return QStringLiteral("WAITING_DATA");
     if (m_serialHadValidFrame || m_serialDataInterrupted) return QStringLiteral("RECONNECTING");
@@ -1234,6 +1706,8 @@ QString ZenithProtocolClient::serialConnectionStateText() const
     const QString state = serialConnectionState();
     if (state == QLatin1String("DETECTED")) return QStringLiteral("已检测、未连接");
     if (state == QLatin1String("CONNECTING")) return QStringLiteral("正在连接");
+    if (state == QLatin1String("PAIRING")) return radioPairingStateText();
+    if (state == QLatin1String("PAIRING_FAILED")) return radioPairingStateText();
     if (state == QLatin1String("WAITING_DATA")) return QStringLiteral("串口已打开、等待飞机数据");
     if (state == QLatin1String("COMMUNICATING")) return QStringLiteral("通信正常");
     if (state == QLatin1String("RECONNECTING")) return QStringLiteral("数据中断、自动重连中");

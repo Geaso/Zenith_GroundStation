@@ -10,6 +10,7 @@ class ZenithProtocolClient;
 class CommandDispatcher;
 class FlightRecorder;
 class ParamStore;
+class RadioPairingModel;
 
 class AppState : public QObject
 {
@@ -93,6 +94,14 @@ class AppState : public QObject
     Q_PROPERTY(int tcpPort READ tcpPort NOTIFY linkSettingsChanged)
     Q_PROPERTY(int heartbeatPort READ heartbeatPort NOTIFY linkSettingsChanged)
     Q_PROPERTY(QObject* protocolClient READ protocolClientObj CONSTANT)
+    Q_PROPERTY(QObject* radioPairingModel READ radioPairingModelObj CONSTANT)
+    Q_PROPERTY(int selectedRadioPairingIndex READ selectedRadioPairingIndex NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString selectedRadioPairingName READ selectedRadioPairingName NOTIFY radioPairingChanged)
+    Q_PROPERTY(int selectedRadioAddress READ selectedRadioAddress NOTIFY radioPairingChanged)
+    Q_PROPERTY(int selectedRadioUavId READ selectedRadioUavId NOTIFY radioPairingChanged)
+    Q_PROPERTY(int actualTelemetryUavId READ actualTelemetryUavId NOTIFY radioPairingChanged)
+    Q_PROPERTY(bool radioPairingMismatch READ radioPairingMismatch NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString radioPairingWarning READ radioPairingWarning NOTIFY radioPairingChanged)
     Q_PROPERTY(QString udpLinkState READ udpLinkState NOTIFY linkStateChanged)
     Q_PROPERTY(QString tcpLinkState READ tcpLinkState NOTIFY linkStateChanged)
     Q_PROPERTY(QString heartbeatLinkState READ heartbeatLinkState NOTIFY linkStateChanged)
@@ -226,6 +235,20 @@ public:
     Q_INVOKABLE void disconnectProtocol();
     Q_INVOKABLE bool testProtocol();
     QObject *protocolClientObj() const;
+    QObject *radioPairingModelObj() const;
+    int selectedRadioPairingIndex() const;
+    QString selectedRadioPairingName() const;
+    int selectedRadioAddress() const;
+    int selectedRadioUavId() const;
+    int actualTelemetryUavId() const;
+    bool radioPairingMismatch() const;
+    QString radioPairingWarning() const;
+    Q_INVOKABLE bool selectRadioPairing(int row);
+    Q_INVOKABLE bool addRadioPairing(const QString &name, int radioAddress, int uavId, const QString &note);
+    Q_INVOKABLE bool updateRadioPairing(int row, const QString &name, int radioAddress, int uavId, const QString &note);
+    Q_INVOKABLE bool removeRadioPairing(int row);
+    Q_INVOKABLE bool restoreBuiltInRadioPairing(int row);
+    Q_INVOKABLE bool reapplyRadioPairing();
     Q_INVOKABLE void startRecording();
     Q_INVOKABLE void stopRecording();
     Q_INVOKABLE void requestParams(int module);
@@ -280,9 +303,11 @@ signals:
     void profilesChanged();
     void missionStateChanged();
     void gridMapChanged();
+    void radioPairingChanged();
 
 private:
     QVariantList toVariantList(const QList<QPointF> &points) const;
+    void syncProtocolTargetForTransport();
     void syncFromStore();
     void bootstrapDemoTelemetry();
     void sendNextMissionWaypoint();
@@ -378,4 +403,6 @@ private:
     CommandDispatcher *m_commandDispatcher = nullptr;
     FlightRecorder *m_flightRecorder = nullptr;
     ParamStore *m_paramStore = nullptr;
+    RadioPairingModel *m_radioPairingModel = nullptr;
+    QString m_selectedRadioPairingName;
 };

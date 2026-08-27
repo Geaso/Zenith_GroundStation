@@ -9,6 +9,8 @@
 #include <QUdpSocket>
 #include <QVariantMap>
 
+#include "Lr24RadioProtocol.h"
+
 enum class TransportMode { Network, Serial };
 
 class ZenithProtocolClient : public QObject
@@ -31,6 +33,15 @@ class ZenithProtocolClient : public QObject
     Q_PROPERTY(qulonglong serialRxBytes READ serialRxBytes NOTIFY linkStatesChanged)
     Q_PROPERTY(qulonglong serialTxBytes READ serialTxBytes NOTIFY linkStatesChanged)
     Q_PROPERTY(int serialReconnectCount READ serialReconnectCount NOTIFY linkStatesChanged)
+    Q_PROPERTY(int radioTargetAddress READ radioTargetAddress WRITE setRadioTargetAddress NOTIFY radioPairingChanged)
+    Q_PROPERTY(int radioActualAddress READ radioActualAddress NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString radioActualAddressText READ radioActualAddressText NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString radioPairingState READ radioPairingState NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString radioPairingStateText READ radioPairingStateText NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString radioPairingErrorCode READ radioPairingErrorCode NOTIFY radioPairingChanged)
+    Q_PROPERTY(QString radioPairingErrorText READ radioPairingErrorText NOTIFY radioPairingChanged)
+    Q_PROPERTY(bool radioPairingReady READ radioPairingReady NOTIFY radioPairingChanged)
+    Q_PROPERTY(bool radioAddressMatchesTarget READ radioAddressMatchesTarget NOTIFY radioPairingChanged)
 
 public:
     explicit ZenithProtocolClient(QObject *parent = nullptr);
@@ -85,6 +96,17 @@ public:
     qulonglong serialRxBytes() const;
     qulonglong serialTxBytes() const;
     int serialReconnectCount() const;
+    int radioTargetAddress() const;
+    void setRadioTargetAddress(int address);
+    int radioActualAddress() const;
+    QString radioActualAddressText() const;
+    QString radioPairingState() const;
+    QString radioPairingStateText() const;
+    QString radioPairingErrorCode() const;
+    QString radioPairingErrorText() const;
+    bool radioPairingReady() const;
+    bool radioAddressMatchesTarget() const;
+    Q_INVOKABLE bool reapplyRadioPairing();
     Q_INVOKABLE void refreshSerialPorts();
 
 signals:
@@ -97,6 +119,7 @@ signals:
     void serialPortNameChanged();
     void serialBaudRateChanged();
     void availableSerialPortsChanged();
+    void radioPairingChanged();
 
 private slots:
     void onTcpConnected();
@@ -105,6 +128,7 @@ private slots:
     void onTcpError(QAbstractSocket::SocketError error);
     void onReconnectTimer();
     void onHeartbeatTimer();
+    void onRadioPairingTimeout();
 
 private:
     struct DecodedFrame {
@@ -146,6 +170,27 @@ private:
     void updateSerialRates(qint64 now);
     void onSerialReadyRead();
     void onSerialError(QSerialPort::SerialPortError error);
+    void beginRadioPairing();
+    void resetRadioPairing(bool clearActualAddress);
+    void sendRadioConfigHeartbeat();
+    void sendRadioGetAddress();
+    void sendRadioSetAddress();
+    void handleRadioConfigFrame(const Lr24RadioProtocol::Frame &frame);
+    void completeRadioPairing();
+    void failRadioPairing(const QString &code, const QString &message);
+
+    enum class RadioPairingStage {
+        Idle,
+        Settling,
+        WaitingHeartbeat,
+        WaitingInitialRead,
+        WaitingSetAck,
+        WaitingWriteDelay,
+        WaitingVerify,
+        Ready,
+        Failed
+    };
+    void setRadioPairingStage(RadioPairingStage stage);
 
     QString m_remoteHostIp = QStringLiteral("127.0.0.1");
     quint16 m_udpPort = 8889;
@@ -234,4 +279,26 @@ private:
     int m_serialReconnectBackoffStep{0};
     qint32 m_serialBaudRate{921600};
     static constexpr int kSerialStaleReconnectMs = 3500;
+
+    // LR24 local configuration handshake. While this state machine is active,
+    // the COM port is exclusively consumed by Mico configuration frames and
+    // normal Zenith traffic is deliberately gated.
+    QTimer m_radioPairingTimer;
+    Lr24RadioProtocol::StreamParser m_radioConfigParser;
+    RadioPairingStage m_radioPairingStage{RadioPairingStage::Idle};
+    int m_radioTargetAddress{0};
+    int m_radioActualAddress{-1};
+    quint8 m_radioProductModel{0};
+    quint8 m_radioSystemId{0};
+    quint8 m_radioConfigSequence{0};
+    int m_radioPairingAttempts{0};
+    QByteArray m_radioCurrentParameters;
+    QString m_radioLastParseError;
+    QString m_radioPairingErrorCode;
+    QString m_radioPairingErrorText;
+    static constexpr int kRadioOpenSettleMs = 280;
+    static constexpr int kRadioRetryIntervalMs = 500;
+    static constexpr int kRadioWriteSettleMs = 300;
+    static constexpr int kRadioHeartbeatAttempts = 6;
+    static constexpr int kRadioQueryAttempts = 4;
 };

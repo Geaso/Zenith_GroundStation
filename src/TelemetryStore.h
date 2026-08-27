@@ -77,6 +77,7 @@ public:
     QList<QPointF> waypointPoints() const;
     QString currentVehicleTopicRoot() const;
     int currentVehicleId() const;
+    int lastTelemetrySenderId() const;
     QStringList runningNodes() const;
     QString moduleExecFeedback() const;
 
@@ -117,7 +118,7 @@ public:
     QVariantList preflightChecks() const; // [{name, enabled, healthy}] 供面板逐项显示
     QString missionLogText() const;       // 任务日志滚动缓冲（最新在上）
     // ---- 链路/就绪状态（DJI 式分层提示）----
-    void noteFrameReceived();             // 收到任一 CRC 通过的帧时调用
+    void noteFrameReceived(int senderId = 0); // 收到任一 CRC 通过的帧时调用
     bool linkEstablished() const;         // 已对频：收到过有效帧
     // 飞行遥测是否已稳定。connected 只代表"收到过任一帧"（心跳就能置真），而 UAVSTATE
     // 要等机载控制状态机起来才有，中间那十几秒 UI 会把默认值 0.00 当成真实读数显示。
@@ -138,6 +139,7 @@ public:
 
 signals:
     void telemetryChanged();
+    void telemetrySenderChanged();
     void pathChanged();
     void gridMapChanged();
     void plannedPathChanged();
@@ -232,6 +234,7 @@ private:
     double m_desiredVelocityZ = 0.0;
     double m_homeDistance = 0.0;
     int m_currentVehicleId = 1;
+    int m_lastTelemetrySenderId = -1;
     QStringList m_runningNodes;
     QString m_moduleExecFeedback;
 

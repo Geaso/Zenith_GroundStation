@@ -3,6 +3,7 @@
 #include "CommandDispatcher.h"
 #include "FlightRecorder.h"
 #include "ParamStore.h"
+#include "RadioPairingModel.h"
 #include "TelemetryStore.h"
 #include "ZenithProtocolClient.h"
 #include "ZenithProtocol.h"
@@ -21,11 +22,14 @@ AppState::AppState(QObject *parent)
     m_commandDispatcher = new CommandDispatcher(m_telemetryStore, m_protocolClient, this);
     m_flightRecorder = new FlightRecorder(m_telemetryStore, this);
     m_paramStore = new ParamStore(this);
+    m_radioPairingModel = new RadioPairingModel(this);
 
     connect(m_telemetryStore, &TelemetryStore::telemetryChanged, this, [this]() {
         syncFromStore();
         emit telemetryChanged();
     });
+    connect(m_telemetryStore, &TelemetryStore::telemetrySenderChanged,
+            this, &AppState::radioPairingChanged);
     connect(m_telemetryStore, &TelemetryStore::pathChanged, this, [this]() {
         syncFromStore();
         emit pathChanged();
@@ -52,11 +56,13 @@ AppState::AppState(QObject *parent)
         m_protocolConnected = m_protocolClient->isConnected();
         emit linkStateChanged();
         emit linkSettingsChanged();
+        // radioPairingMismatch also depends on protocol active/transport state.
+        emit radioPairingChanged();
     });
     connect(m_protocolClient, &ZenithProtocolClient::decodedMessage, this, [this](int msgId, int robotId, const QVariantMap &payload) {
         // 只要收到任一 CRC 通过的帧就算"已对频" —— 这是最快的链路反馈，
         // 不依赖任何业务数据，上电几秒内即可点亮。
-        m_telemetryStore->noteFrameReceived();
+        m_telemetryStore->noteFrameReceived(robotId);
         switch (msgId) {
         case ZenithProtocol::UAVSTATE:
             m_telemetryStore->applyUavState(payload, robotId);
@@ -108,6 +114,19 @@ AppState::AppState(QObject *parent)
     m_protocolLogText = m_protocolClient->protocolLogText();
     m_protocolConnected = m_protocolClient->isConnected();
 
+    // Restore the logical aircraft pairing independently from the COM port.
+    // The selected pairing drives both LR24 link-layer address and the existing
+    // application-layer robotId selection.
+    const QString savedPairing = QSettings().value(
+        QStringLiteral("radioPairing/selectedName"), QStringLiteral("yukong214")).toString();
+    int pairingRow = m_radioPairingModel->indexOfName(savedPairing);
+    if (pairingRow < 0 && m_radioPairingModel->count() > 0) {
+        pairingRow = 0;
+    }
+    if (pairingRow >= 0) {
+        selectRadioPairing(pairingRow);
+    }
+
     // Load last-used connection profile
     QString lastProfile = lastUsedProfile();
     if (!lastProfile.isEmpty()) {
@@ -117,6 +136,7 @@ AppState::AppState(QObject *parent)
                 applySerialSettings(p.value("portName").toString(),
                                     p.value("baudRate").toInt());
             } else {
+                selectVehicle(p.value("name").toString());
                 applyConnectionSettings(p.value("ip").toString(),
                                         p.value("udp").toInt(),
                                         p.value("tcp").toInt(),
@@ -394,6 +414,7 @@ void AppState::applyConnectionSettings(const QString &hostIp, int udpPort, int t
     m_tcpPort = m_protocolClient->tcpPort();
     m_heartbeatPort = m_protocolClient->heartbeatPort();
     emit linkSettingsChanged();
+    emit radioPairingChanged();
 }
 
 void AppState::applySerialSettings(const QString &portName, int baudRate)
@@ -401,7 +422,10 @@ void AppState::applySerialSettings(const QString &portName, int baudRate)
     m_protocolClient->setTransportMode(1); // Serial
     m_protocolClient->setSerialPortName(portName);
     m_protocolClient->setSerialBaudRate(baudRate);
+    syncProtocolTargetForTransport();
+    m_protocolClient->setRadioTargetAddress(selectedRadioAddress());
     emit linkSettingsChanged();
+    emit radioPairingChanged();
 }
 
 QObject *AppState::protocolClientObj() const
@@ -409,10 +433,185 @@ QObject *AppState::protocolClientObj() const
     return m_protocolClient;
 }
 
+QObject *AppState::radioPairingModelObj() const
+{
+    return m_radioPairingModel;
+}
+
+int AppState::selectedRadioPairingIndex() const
+{
+    return m_radioPairingModel
+        ? m_radioPairingModel->indexOfName(m_selectedRadioPairingName) : -1;
+}
+
+QString AppState::selectedRadioPairingName() const
+{
+    return m_selectedRadioPairingName;
+}
+
+int AppState::selectedRadioAddress() const
+{
+    if (!m_radioPairingModel) return 0;
+    return m_radioPairingModel->pairingByName(m_selectedRadioPairingName)
+        .value(QStringLiteral("radio_address")).toInt();
+}
+
+int AppState::selectedRadioUavId() const
+{
+    if (!m_radioPairingModel) return 0;
+    return m_radioPairingModel->pairingByName(m_selectedRadioPairingName)
+        .value(QStringLiteral("uav_id")).toInt();
+}
+
+int AppState::actualTelemetryUavId() const
+{
+    return m_telemetryStore ? m_telemetryStore->lastTelemetrySenderId() : -1;
+}
+
+bool AppState::radioPairingMismatch() const
+{
+    return m_protocolClient && m_protocolClient->active()
+        && m_protocolClient->transportMode() == 1
+        && actualTelemetryUavId() >= 0 && selectedRadioUavId() > 0
+        && actualTelemetryUavId() != selectedRadioUavId();
+}
+
+QString AppState::radioPairingWarning() const
+{
+    if (!radioPairingMismatch()) {
+        return QString();
+    }
+    return QStringLiteral("配对不一致：当前 %1（ID %2），实际收到 ID %3；指令仍发送到 %2")
+        .arg(selectedRadioPairingName())
+        .arg(selectedRadioUavId())
+        .arg(actualTelemetryUavId());
+}
+
+bool AppState::selectRadioPairing(int row)
+{
+    if (!m_radioPairingModel) return false;
+    const QVariantMap pairing = m_radioPairingModel->pairingAt(row);
+    if (pairing.isEmpty()) return false;
+
+    const QString name = pairing.value(QStringLiteral("name")).toString();
+    const int address = pairing.value(QStringLiteral("radio_address")).toInt();
+    const int uavId = pairing.value(QStringLiteral("uav_id")).toInt();
+    if (name.isEmpty() || address < 1 || address > 254
+        || uavId < 1 || uavId > 254 || address != uavId) {
+        return false;
+    }
+
+    m_selectedRadioPairingName = name;
+    QSettings settings;
+    settings.setValue(QStringLiteral("radioPairing/selectedName"), name);
+    settings.sync();
+
+    // Keep the established AppState -> TelemetryStore -> robotId chain in
+    // serial mode. Restoring an LR24 pairing must not overwrite a TCP target.
+    if (m_protocolClient->transportMode() == 1) {
+        m_telemetryStore->setVehicleName(QStringLiteral("UAV%1").arg(uavId));
+        m_protocolClient->setRobotId(uavId);
+    }
+    m_protocolClient->setRadioTargetAddress(address);
+    emit radioPairingChanged();
+    emit linkSettingsChanged();
+
+    if (m_protocolClient->active() && m_protocolClient->transportMode() == 1) {
+        // Selection and persistence have already succeeded. Live handshake
+        // failures are exposed by protocolClient, not as a table-save failure.
+        m_protocolClient->reapplyRadioPairing();
+    }
+    return true;
+}
+
+bool AppState::addRadioPairing(const QString &name, int radioAddress,
+                               int uavId, const QString &note)
+{
+    if (!m_radioPairingModel
+        || !m_radioPairingModel->addPairing(name, radioAddress, uavId, note)) {
+        return false;
+    }
+    return selectRadioPairing(m_radioPairingModel->indexOfName(name));
+}
+
+bool AppState::updateRadioPairing(int row, const QString &name, int radioAddress,
+                                  int uavId, const QString &note)
+{
+    if (!m_radioPairingModel) return false;
+    const QVariantMap before = m_radioPairingModel->pairingAt(row);
+    const bool wasSelected = before.value(QStringLiteral("name")).toString()
+        == m_selectedRadioPairingName;
+    if (!m_radioPairingModel->updatePairing(row, name, radioAddress, uavId, note)) {
+        return false;
+    }
+    if (wasSelected) {
+        return selectRadioPairing(m_radioPairingModel->indexOfName(name));
+    }
+    emit radioPairingChanged();
+    return true;
+}
+
+bool AppState::removeRadioPairing(int row)
+{
+    if (!m_radioPairingModel) return false;
+    const bool wasSelected = m_radioPairingModel->pairingAt(row)
+        .value(QStringLiteral("name")).toString() == m_selectedRadioPairingName;
+    if (!m_radioPairingModel->removePairing(row)) {
+        return false;
+    }
+    if (wasSelected && m_radioPairingModel->count() > 0) {
+        return selectRadioPairing(qMin(row, m_radioPairingModel->count() - 1));
+    }
+    emit radioPairingChanged();
+    return true;
+}
+
+bool AppState::restoreBuiltInRadioPairing(int row)
+{
+    if (!m_radioPairingModel) return false;
+    const bool wasSelected = m_radioPairingModel->pairingAt(row)
+        .value(QStringLiteral("name")).toString() == m_selectedRadioPairingName;
+    if (!m_radioPairingModel->restoreBuiltIn(row)) {
+        return false;
+    }
+    if (wasSelected) {
+        return selectRadioPairing(row);
+    }
+    emit radioPairingChanged();
+    return true;
+}
+
+bool AppState::reapplyRadioPairing()
+{
+    if (!m_protocolClient || selectedRadioAddress() < 1) return false;
+    m_protocolClient->setRadioTargetAddress(selectedRadioAddress());
+    return m_protocolClient->reapplyRadioPairing();
+}
+
 void AppState::connectProtocol()
 {
-    m_protocolClient->setRobotId(m_telemetryStore->currentVehicleId());
+    // A restored serial profile must keep the selected LR24 pairing as the
+    // application-layer target. currentVehicleId() may still contain the
+    // default network target (1) during startup, so synchronize both layers
+    // before opening the COM port and starting the pairing state machine.
+    syncProtocolTargetForTransport();
     m_protocolClient->start();
+}
+
+void AppState::syncProtocolTargetForTransport()
+{
+    if (!m_protocolClient || !m_telemetryStore) return;
+
+    if (m_protocolClient->transportMode() == 1) { // Serial / LR24
+        const int uavId = selectedRadioUavId();
+        if (uavId >= 1 && uavId <= 254) {
+            m_telemetryStore->setVehicleName(QStringLiteral("UAV%1").arg(uavId));
+            m_protocolClient->setRobotId(uavId);
+            return;
+        }
+    }
+
+    m_protocolClient->setRobotId(m_telemetryStore->currentVehicleId());
 }
 
 void AppState::disconnectProtocol()

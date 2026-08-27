@@ -50,6 +50,40 @@ int main(int argc, char **argv)
     }
 
     {
+        // 选中的应用层目标必须与实际收到的 senderId 分开保存；否则误连遥测会
+        // 悄悄改写后续指令目标，界面也无法给出“期望/实际”告警。
+        TelemetryStore store;
+        store.setVehicleName(QStringLiteral("UAV215"));
+        store.noteFrameReceived(214);
+        store.applyUavState(uavStatePayload(20.0), 214);
+        if (!require(store.currentVehicleId() == 215,
+                     "遥测 senderId 不得覆盖操作员选中的 vehicleId")) {
+            return 1;
+        }
+        if (!require(store.lastTelemetrySenderId() == 214,
+                     "应单独记录最近实际遥测 senderId")) {
+            return 1;
+        }
+        store.setTransportHealth(false, false, QStringLiteral("link lost"));
+        if (!require(store.lastTelemetrySenderId() == -1,
+                     "链路丢失后实际 senderId 应失效")) {
+            return 1;
+        }
+    }
+
+    {
+        // 即使只有一帧有效协议消息、尚未形成稳定 UAVSTATE，链路失效也
+        // 必须清掉实际 sender，避免自动重连期间显示上一台飞机的告警。
+        TelemetryStore store;
+        store.noteFrameReceived(214);
+        store.setTransportHealth(false, false, QStringLiteral("link lost"));
+        if (!require(store.lastTelemetrySenderId() == -1,
+                     "无稳定遥测时链路丢失也应作废实际 senderId")) {
+            return 1;
+        }
+    }
+
+    {
         // 帧数够但静默期没到 —— 这正是重启后数值跳变的窗口
         TelemetryStore store;
         feed(store, 8);

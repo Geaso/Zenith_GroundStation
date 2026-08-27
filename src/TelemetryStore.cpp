@@ -109,6 +109,11 @@ int TelemetryStore::currentVehicleId() const
     return m_currentVehicleId;
 }
 
+int TelemetryStore::lastTelemetrySenderId() const
+{
+    return m_lastTelemetrySenderId;
+}
+
 QStringList TelemetryStore::runningNodes() const
 {
     return m_runningNodes;
@@ -218,9 +223,7 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     m_flightStatus = m_connected ? "Telemetry Online" : "Vehicle Offline";
     m_heartbeatLink = "Heartbeat OK";
     m_videoLink = payload.value("video_status", m_videoStatus).toString();
-    if (senderId > 0) {
-        m_currentVehicleId = senderId;
-    }
+    Q_UNUSED(senderId)
 
     QPointF sample(0.10 + qMin(0.82, qAbs(posX) / 50.0), 0.12 + qMin(0.72, qAbs(posY) / 50.0));
     if (m_pathPoints.isEmpty() || m_pathPoints.last() != sample) {
@@ -296,10 +299,19 @@ void TelemetryStore::applyTextInfo(const QVariantMap &payload)
     emit telemetryChanged();
 }
 
-void TelemetryStore::noteFrameReceived()
+void TelemetryStore::noteFrameReceived(int senderId)
 {
+    bool changed = false;
+    if (senderId >= 0 && m_lastTelemetrySenderId != senderId) {
+        m_lastTelemetrySenderId = senderId;
+        changed = true;
+        emit telemetrySenderChanged();
+    }
     if (!m_linkEstablished) {
         m_linkEstablished = true;
+        changed = true;
+    }
+    if (changed) {
         emit telemetryChanged();
     }
 }
@@ -429,15 +441,17 @@ void TelemetryStore::setTransportHealth(bool telemetryFresh, bool heartbeatFresh
     const QString nextHeartbeat = heartbeatFresh ? m_heartbeatLink : QStringLiteral("Heartbeat Stale");
     const bool nextConnected = telemetryFresh;
     const bool telemetryLost = m_connected && !nextConnected;
+    const bool senderLost = !telemetryFresh && m_lastTelemetrySenderId != -1;
 
-    if (nextFlightStatus == m_flightStatus && nextHeartbeat == m_heartbeatLink && nextConnected == m_connected) {
+    if (nextFlightStatus == m_flightStatus && nextHeartbeat == m_heartbeatLink
+        && nextConnected == m_connected && !senderLost) {
         return;
     }
 
     m_flightStatus = nextFlightStatus;
     m_heartbeatLink = nextHeartbeat;
     m_connected = nextConnected;
-    if (telemetryLost) {
+    if (telemetryLost || senderLost) {
         invalidateVehicleData();
     }
     emit telemetryChanged();
@@ -464,6 +478,10 @@ void TelemetryStore::invalidateVehicleData()
     m_relativeAltitude = 0.0;
     m_range = 0.0;
     m_speed = 0.0;
+    if (m_lastTelemetrySenderId != -1) {
+        m_lastTelemetrySenderId = -1;
+        emit telemetrySenderChanged();
+    }
 }
 
 void TelemetryStore::setCommandFeedback(const QString &commandName, const QString &ackText)

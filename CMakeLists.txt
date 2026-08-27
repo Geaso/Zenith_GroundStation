@@ -20,6 +20,10 @@ set(APP_SOURCES
     src/TelemetryStore.h
     src/ZenithProtocolClient.cpp
     src/ZenithProtocolClient.h
+    src/Lr24RadioProtocol.cpp
+    src/Lr24RadioProtocol.h
+    src/RadioPairingModel.cpp
+    src/RadioPairingModel.h
     src/CommandDispatcher.cpp
     src/CommandDispatcher.h
     src/ZenithProtocolProfile.cpp
@@ -49,6 +53,7 @@ qt_add_qml_module(${PROJECT_NAME}
     VERSION 1.0
     QML_FILES
         qml/Main.qml
+        qml/RadioPairingDialog.qml
         qml/components/InfoCard.qml
         qml/components/MetricTile.qml
         qml/components/SectionTitle.qml
@@ -105,7 +110,10 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${CMAKE_CURRENT_SOURCE_DIR}/config/script_actions.json"
             "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/script_actions.json"
-    COMMENT "拷贝任务清单 config/script_actions.json"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/config/radio_pairings.json"
+            "$<TARGET_FILE_DIR:${PROJECT_NAME}>/config/radio_pairings.json"
+    COMMENT "拷贝任务清单与数传配对表"
 )
 
 qt_finalize_executable(${PROJECT_NAME})
@@ -129,4 +137,22 @@ if(BUILD_TESTING)
     target_include_directories(TelemetryStabilityTests PRIVATE src)
     target_link_libraries(TelemetryStabilityTests PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME telemetry_stability COMMAND TelemetryStabilityTests)
+
+    qt_add_executable(Lr24RadioProtocolTests
+        tests/test_lr24_radio_protocol.cpp
+        src/Lr24RadioProtocol.cpp
+        src/Lr24RadioProtocol.h
+    )
+    target_include_directories(Lr24RadioProtocolTests PRIVATE src)
+    target_link_libraries(Lr24RadioProtocolTests PRIVATE Qt6::Core)
+    add_test(NAME lr24_radio_protocol COMMAND Lr24RadioProtocolTests)
+
+    qt_add_executable(RadioPairingModelTests
+        tests/test_radio_pairing_model.cpp
+        src/RadioPairingModel.cpp
+        src/RadioPairingModel.h
+    )
+    target_include_directories(RadioPairingModelTests PRIVATE src)
+    target_link_libraries(RadioPairingModelTests PRIVATE Qt6::Core)
+    add_test(NAME radio_pairing_model COMMAND RadioPairingModelTests)
 endif()

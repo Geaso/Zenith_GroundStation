@@ -1,0 +1,20 @@
+[
+    {
+        "name": "客户1（已交付）",
+        "radio_address": 1,
+        "uav_id": 1,
+        "note": "已知例外：客户现场单独使用，不与本机队同场；不要按 IP 反推编号"
+    },
+    {
+        "name": "yukong214",
+        "radio_address": 214,
+        "uav_id": 214,
+        "note": "机身编号 214；当前 Jetson 地址 192.168.1.75 与编号无关"
+    },
+    {
+        "name": "新F.1",
+        "radio_address": 215,
+        "uav_id": 215,
+        "note": "新刷 F.1 板"
+    }
+]

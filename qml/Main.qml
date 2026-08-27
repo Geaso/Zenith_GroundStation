@@ -111,10 +111,12 @@ ApplicationWindow {
                     }
                 }
 
-                // Vehicle selector (from saved profiles)
+                // TCP profile selector.  Serial mode uses the independent LR24
+                // pairing table below so telemetry can never rewrite the target.
                 ComboBox {
                     id: vehicleCombo; width: Math.max(80, contentItem.implicitWidth + 28); height: 24
                     anchors.verticalCenter: parent.verticalCenter
+                    visible: appState.protocolClient.transportMode !== 1
                     enabled: !appState.protocolClient.active
                     model: savedProfileNames; currentIndex: 0
                     onActivated: {
@@ -141,6 +143,27 @@ ApplicationWindow {
                         width: vehicleCombo.width; height: 26
                         contentItem: Text { text: modelData; color: "#E6EDF3"; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter }
                         background: Rectangle { color: hovered ? "#30363D" : "transparent" }
+                    }
+                }
+
+                ComboBox {
+                    id: radioHeaderCombo
+                    width: 150; height: 24
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: appState.protocolClient.transportMode === 1
+                    model: appState.radioPairingModel
+                    textRole: "name"
+                    currentIndex: appState.selectedRadioPairingIndex
+                    onActivated: appState.selectRadioPairing(index)
+                    background: Rectangle {
+                        radius: 5; color: "#21262D"
+                        border.color: appState.radioPairingMismatch ? "#F85149" : "#30363D"
+                    }
+                    contentItem: Text {
+                        leftPadding: 8
+                        text: radioHeaderCombo.currentText + "  [" + appState.selectedRadioAddress + "]"
+                        color: appState.radioPairingMismatch ? "#FF7B72" : "#E6EDF3"
+                        font.pixelSize: 11; font.bold: true; verticalAlignment: Text.AlignVCenter
                     }
                 }
 
@@ -186,7 +209,12 @@ ApplicationWindow {
                 // Status dots: Connection / GPS / Battery
                 Row {
                     anchors.verticalCenter: parent.verticalCenter; spacing: 10
-                    StatusDot { dotColor: appState.protocolConnected ? "#3FB950" : (appState.protocolClient.active ? "#D29922" : "#F85149"); label: "Link" }
+                    StatusDot {
+                        dotColor: appState.protocolConnected ? "#3FB950"
+                                  : appState.protocolClient.serialConnectionState === "PAIRING_FAILED" ? "#F85149"
+                                  : appState.protocolClient.active ? "#D29922" : "#F85149"
+                        label: "Link"
+                    }
                     StatusDot { dotColor: appState.connected && appState.gpsStatus.indexOf("3D") >= 0 ? "#3FB950" : appState.connected && appState.gpsStatus.indexOf("2D") >= 0 ? "#FFA657" : "#F85149"; label: "GPS" }
                     StatusDot { dotColor: (!appState.connected || !appState.batteryValid) ? "#484F58" : appState.batteryPercent < 0.2 ? "#F85149" : appState.batteryPercent < 0.4 ? "#FFA657" : "#3FB950"; label: "Bat" }
                 }
@@ -208,12 +236,28 @@ ApplicationWindow {
             }
         }
 
+        Rectangle {
+            id: pairingWarningBar
+            width: parent.width
+            height: appState.radioPairingMismatch ? 38 : 0
+            visible: height > 0
+            color: "#5D1F1B"
+            border.color: "#F85149"
+
+            Row {
+                anchors.centerIn: parent; spacing: 10
+                Text { text: "⚠"; color: "#FFB3AD"; font.pixelSize: 16; font.bold: true }
+                Text { text: appState.radioPairingWarning; color: "#FFFFFF"; font.pixelSize: 13; font.bold: true }
+                Text { text: "（未阻断指令，请核对所选飞机）"; color: "#FFB3AD"; font.pixelSize: 11 }
+            }
+        }
+
         // ══════════════════════════════════════
         //  Body: Global Sidebar + Content
         // ══════════════════════════════════════
         Row {
             width: parent.width
-            height: parent.height - 44
+            height: parent.height - headerBar.height - pairingWarningBar.height
             spacing: 0
 
             // ── Global Navigation Sidebar (44px) ──
@@ -325,6 +369,12 @@ ApplicationWindow {
         }
     }
 
+    RadioPairingDialog {
+        id: radioPairingDialog
+        x: (window.width - width) / 2
+        y: (window.height - height) / 2
+    }
+
     // ══════════════════════════════════════
     //  Connection Dialog (TCP + Serial)
     // ══════════════════════════════════════
@@ -332,7 +382,10 @@ ApplicationWindow {
         id: connectionDialog
         modal: true
         width: 680
-        height: selectedTransportMode === 1 && serialAdvancedExpanded ? 760 : 680
+        height: Math.min(window.height - 40,
+                         selectedTransportMode === 1
+                         ? (serialAdvancedExpanded ? 940 : 860)
+                         : 680)
         x: (window.width - width) / 2
         y: (window.height - height) / 2
         padding: 0
@@ -395,12 +448,23 @@ ApplicationWindow {
             }
         }
 
-        contentItem: Rectangle {
-            color: "#161B22"
+        contentItem: Flickable {
+            id: connectionScroll
+            clip: true
+            contentWidth: width
+            contentHeight: settingsContent.implicitHeight + 40
+            boundsBehavior: Flickable.StopAtBounds
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-            Column {
-                anchors.fill: parent
-                anchors.margins: 20
+            Rectangle {
+                width: connectionScroll.width
+                height: Math.max(connectionScroll.height, settingsContent.implicitHeight + 40)
+                color: "#161B22"
+
+                Column {
+                    id: settingsContent
+                    anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                    anchors.margins: 20
                 spacing: 12
 
                 // ── Saved Profiles ──
@@ -449,6 +513,7 @@ ApplicationWindow {
                                                 }
                                             } else {
                                                 connectionDialog.selectedTransportMode = 0
+                                                appState.selectVehicle(modelData.name)
                                                 hostField.text = modelData.ip
                                                 udpField.text = String(modelData.udp)
                                                 tcpField.text = String(modelData.tcp)
@@ -613,8 +678,11 @@ ApplicationWindow {
                             Rectangle {
                                 width: 11; height: 11; radius: 6; anchors.verticalCenter: parent.verticalCenter
                                 color: appState.protocolClient.serialConnectionState === "COMMUNICATING" ? "#3FB950"
-                                     : appState.protocolClient.serialConnectionState === "WAITING_DATA" || appState.protocolClient.serialConnectionState === "CONNECTING" ? "#D29922"
-                                     : appState.protocolClient.serialConnectionState === "RECONNECTING" ? "#F85149" : "#6E7681"
+                                     : appState.protocolClient.serialConnectionState === "WAITING_DATA"
+                                       || appState.protocolClient.serialConnectionState === "CONNECTING"
+                                       || appState.protocolClient.serialConnectionState === "PAIRING" ? "#D29922"
+                                     : appState.protocolClient.serialConnectionState === "RECONNECTING"
+                                       || appState.protocolClient.serialConnectionState === "PAIRING_FAILED" ? "#F85149" : "#6E7681"
                             }
                             Column {
                                 width: 430; spacing: 2
@@ -687,6 +755,98 @@ ApplicationWindow {
                     }
                 }
 
+                // LR24 address and UAV ID pairing.  Selection stays editable while
+                // connected; AppState then restarts the configuration handshake.
+                Rectangle {
+                    visible: connectionDialog.selectedTransportMode === 1
+                    width: parent.width; height: 174; radius: 8
+                    color: "#21262D"
+                    border.color: appState.radioPairingMismatch || appState.protocolClient.radioPairingErrorCode.length > 0 ? "#F85149" : "#30363D"
+
+                    Column {
+                        anchors.fill: parent; anchors.margins: 12; spacing: 9
+
+                        Row {
+                            width: parent.width; spacing: 9
+                            Column {
+                                width: 96; spacing: 2
+                                Text { text: "目标配对"; color: "#8B949E"; font.pixelSize: 10 }
+                                Text { text: "切换后立即重配"; color: "#6E7681"; font.pixelSize: 9 }
+                            }
+                            ComboBox {
+                                id: connectionRadioCombo
+                                width: 190; height: 30
+                                model: appState.radioPairingModel
+                                textRole: "name"
+                                currentIndex: appState.selectedRadioPairingIndex
+                                onActivated: appState.selectRadioPairing(index)
+                                background: Rectangle { radius: 6; color: "#0D1117"; border.color: "#30363D" }
+                            }
+                            Column {
+                                width: 155; spacing: 2
+                                Text { text: "目标地址 / UAV ID"; color: "#8B949E"; font.pixelSize: 10 }
+                                Text {
+                                    text: appState.selectedRadioAddress + " / " + appState.selectedRadioUavId
+                                    color: "#58A6FF"; font.pixelSize: 13; font.bold: true; font.family: "Consolas"
+                                }
+                            }
+                            Rectangle {
+                                width: 90; height: 28; radius: 5
+                                color: managePairingMA.containsMouse ? "#30363D" : "#161B22"; border.color: "#30363D"
+                                Text { anchors.centerIn: parent; text: "管理配对表"; color: "#E6EDF3"; font.pixelSize: 10 }
+                                MouseArea { id: managePairingMA; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: radioPairingDialog.open() }
+                            }
+                        }
+
+                        Rectangle { width: parent.width; height: 1; color: "#30363D" }
+
+                        Row {
+                            width: parent.width; spacing: 24
+                            Column {
+                                width: 180; spacing: 2
+                                Text { text: "数传实际地址"; color: "#8B949E"; font.pixelSize: 10 }
+                                Text {
+                                    text: appState.protocolClient.radioActualAddressText
+                                    color: appState.protocolClient.radioActualAddress < 0 ? "#8B949E"
+                                         : appState.protocolClient.radioAddressMatchesTarget ? "#3FB950" : "#F85149"
+                                    font.pixelSize: 13; font.bold: true; font.family: "Consolas"
+                                }
+                            }
+                            Column {
+                                width: 205; spacing: 2
+                                Text { text: "配置状态"; color: "#8B949E"; font.pixelSize: 10 }
+                                Text {
+                                    text: appState.protocolClient.radioPairingStateText
+                                    color: appState.protocolClient.radioPairingReady ? "#3FB950"
+                                         : appState.protocolClient.radioPairingErrorCode.length > 0 ? "#F85149" : "#D29922"
+                                    font.pixelSize: 12; font.bold: true
+                                }
+                            }
+                            Rectangle {
+                                width: 100; height: 28; radius: 5
+                                color: reapplyMA.containsMouse ? "#30363D" : "#161B22"; border.color: "#30363D"
+                                opacity: appState.protocolClient.active ? 1.0 : 0.45
+                                Text { anchors.centerIn: parent; text: "重新下发地址"; color: "#FFA657"; font.pixelSize: 10; font.bold: true }
+                                MouseArea {
+                                    id: reapplyMA; anchors.fill: parent; hoverEnabled: true
+                                    enabled: appState.protocolClient.active
+                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                    onClicked: appState.reapplyRadioPairing()
+                                }
+                            }
+                        }
+
+                        Text {
+                            width: parent.width; elide: Text.ElideRight
+                            text: appState.protocolClient.radioPairingErrorText.length > 0
+                                  ? ("错误 " + appState.protocolClient.radioPairingErrorCode + "：" + appState.protocolClient.radioPairingErrorText)
+                                  : "连接顺序：打开串口 → 读取当前地址 → 下发目标地址 → 回读验证 → 放行业务数据"
+                            color: appState.protocolClient.radioPairingErrorText.length > 0 ? "#FF7B72" : "#6E7681"
+                            font.pixelSize: 10
+                        }
+                    }
+                }
+
                 // ── Buttons ──
                 Row {
                     spacing: 8
@@ -707,6 +867,7 @@ ApplicationWindow {
                             if (connectionDialog.selectedTransportMode === 1) {
                                 appState.applySerialSettings(connectionDialog.serialPortForApply(), Number(baudRateCombo.currentText))
                             } else {
+                                appState.selectVehicle(profileNameField.text)
                                 appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
                             }
                         }
@@ -721,6 +882,7 @@ ApplicationWindow {
                             if (connectionDialog.selectedTransportMode === 1) {
                                 appState.applySerialSettings(connectionDialog.serialPortForApply(), Number(baudRateCombo.currentText))
                             } else {
+                                appState.selectVehicle(profileNameField.text)
                                 appState.applyConnectionSettings(hostField.text, Number(udpField.text), Number(tcpField.text), Number(heartbeatField.text))
                             }
                             appState.connectProtocol()
@@ -762,6 +924,7 @@ ApplicationWindow {
                     }
                 }
             }
+        }
         }
     }
 
