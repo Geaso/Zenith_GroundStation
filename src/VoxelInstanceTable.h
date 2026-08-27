@@ -17,6 +17,8 @@ public:
     // 体素高度量化区间，必须与机载 uav_basic_topic.cpp gridMapCb() 的 z_min/z_max 一致
     static constexpr float kHeightMin = -0.5f;
     static constexpr float kHeightMax = 3.0f;
+    // 图二验收基线：体素之间保留 10% 缝隙，避免相邻格黏成整块平面。
+    static constexpr float kCubeFillRatio = 0.9f;
 
     explicit VoxelInstanceTable(QQuick3DObject *parent = nullptr) : QQuick3DInstancing(parent) {}
 
@@ -56,7 +58,7 @@ protected:
 
         // #Cube is 100x100x100 units. Scale factor to get 1-meter cube = 0.01.
         // Voxel side = resolution meters → scale = res * 0.01
-        const float cubeScale = res * 0.01f * 0.9f;
+        const float cubeScale = res * 0.01f * kCubeFillRatio;
 
         QByteArray buf;
         int count = 0;
@@ -83,6 +85,8 @@ protected:
                 // 0.5m、整根柱子被压到 3.0/3.5 高。
                 float worldZ = kHeightMin + t * (kHeightMax - kHeightMin);
 
+                // 图二验收基线：使用完整量化高度 t 映射颜色。不要把颜色区间
+                // 截到 1.5m，否则 SUPER 的高处障碍会全部饱和成同一片红色。
                 // height → color: blue → cyan → green → yellow → red
                 float cr, cg, cb;
                 if (t < 0.25f)      { float s = t/0.25f;          cr=0;   cg=s;   cb=1;   }
