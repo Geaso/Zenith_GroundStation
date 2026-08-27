@@ -138,6 +138,24 @@ if(BUILD_TESTING)
     target_link_libraries(TelemetryStabilityTests PRIVATE Qt6::Core Qt6::Gui)
     add_test(NAME telemetry_stability COMMAND TelemetryStabilityTests)
 
+    qt_add_executable(VoxelInstanceTableTests
+        tests/test_voxel_instance_table.cpp
+        src/VoxelInstanceTable.h
+        src/TelemetryStore.cpp
+        src/TelemetryStore.h
+        src/ZenithProtocolClient.cpp
+        src/ZenithProtocolClient.h
+        src/Lr24RadioProtocol.cpp
+        src/Lr24RadioProtocol.h
+    )
+    target_include_directories(VoxelInstanceTableTests PRIVATE src)
+    target_link_libraries(VoxelInstanceTableTests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick3D Qt6::Network Qt6::SerialPort)
+    add_test(NAME voxel_instance_table COMMAND VoxelInstanceTableTests)
+    add_test(NAME voxelmap_production_wire COMMAND VoxelInstanceTableTests
+        --wire-fixture "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/voxelmap_frame.bin" 3874)
+    set_tests_properties(voxel_instance_table voxelmap_production_wire PROPERTIES
+        ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1")
+
     qt_add_executable(Lr24RadioProtocolTests
         tests/test_lr24_radio_protocol.cpp
         src/Lr24RadioProtocol.cpp

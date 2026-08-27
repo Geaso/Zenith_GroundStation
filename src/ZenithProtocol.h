@@ -2,6 +2,9 @@
 
 #include <QString>
 #include <QStringList>
+#include <QByteArray>
+#include <QVariantMap>
+#include <functional>
 
 namespace ZenithProtocol {
 
@@ -29,6 +32,7 @@ enum MessageId {
     POSESTAMPED = 10,
     GRIDMAP = 11,
     PLANNEDPATH = 12,
+    VOXELMAP = 13,
 
     SWARMCOMMAND = 101,
     GIMBALCONTROL = 102,
@@ -55,6 +59,28 @@ enum MessageId {
     UGVMARKERARRAYTRAJECTORY = 236,
     GOAL = 255
 };
+
+// VOXELMAP/13: row-major XY columns, uint32-LE mask + uint8 run.
+// Parts end on five-byte record boundaries. GRIDMAP/11 stays independent.
+namespace VoxelMap {
+constexpr int kFirstKey = 80;
+constexpr int kLastKey = 92;
+constexpr int kMaxColumns = 65536;
+constexpr int kMaxParts = 64;
+constexpr int kMaxPartBytes = 6000;
+constexpr int kAssemblyTimeoutMs = 10000;
+}
+
+// Pure codec entry point: offline tests never need to open a transport.
+struct FrameDecodeResult {
+    int msgId = -1;
+    int robotId = 0;
+    QVariantMap payload;
+    int totalBytes = 0;
+    bool valid = false;
+};
+FrameDecodeResult decodeFrame(const QByteArray &buffer);
+int consumeFrames(QByteArray &buffer, const std::function<void(const FrameDecodeResult &)> &onFrame);
 
 enum LocationSource {
     MOCAP = 0,

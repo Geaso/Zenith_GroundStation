@@ -1,7 +1,63 @@
 #include "TelemetryStore.h"
+#include "ZenithProtocol.h"
 
 #include <QDateTime>
 #include <QtMath>
+#include <QtEndian>
+#include <cmath>
+#include <limits>
+
+namespace {
+bool mapUnsigned(const QVariantMap &payload, const char *key, quint32 limit, quint32 &out,
+                 bool allowJsonNumber = false)
+{
+    const QVariant value = payload.value(QLatin1String(key));
+    if (allowJsonNumber && (value.typeId() == QMetaType::Double || value.typeId() == QMetaType::Float)) {
+        const double number = value.toDouble();
+        if (!std::isfinite(number) || number < 0 || number > limit || std::floor(number) != number)
+            return false;
+        out = quint32(number);
+        return true;
+    }
+    if (value.typeId() != QMetaType::UInt && value.typeId() != QMetaType::Int
+        && value.typeId() != QMetaType::ULongLong && value.typeId() != QMetaType::LongLong)
+        return false;
+    bool ok = false;
+    const qulonglong number = value.toULongLong(&ok);
+    if (!ok || number > limit) return false;
+    out = quint32(number);
+    return true;
+}
+
+bool mapFloat(const QVariantMap &payload, const char *key, float &out)
+{
+    const QVariant value = payload.value(QLatin1String(key));
+    if (value.typeId() != QMetaType::Float && value.typeId() != QMetaType::Double
+        && value.typeId() != QMetaType::Int && value.typeId() != QMetaType::UInt
+        && value.typeId() != QMetaType::LongLong && value.typeId() != QMetaType::ULongLong)
+        return false;
+    const double number = value.toDouble();
+    if (!std::isfinite(number) || std::abs(number) > std::numeric_limits<float>::max())
+        return false;
+    out = float(number);
+    return true;
+}
+
+bool mapExtentFinite(float origin, float resolution, int size)
+{
+    const double end = double(origin) + double(resolution) * size;
+    return std::isfinite(end) && std::abs(end) <= std::numeric_limits<float>::max();
+}
+
+bool sameVoxelMetadata(const TelemetryStore::VoxelMapSnapshot &a,
+                       const TelemetryStore::VoxelMapSnapshot &b)
+{
+    return a.vehicleId == b.vehicleId && a.frameId == b.frameId
+        && a.originX == b.originX && a.originY == b.originY && a.resolution == b.resolution
+        && a.width == b.width && a.height == b.height && a.zMin == b.zMin
+        && a.zResolution == b.zResolution && a.layers == b.layers;
+}
+}
 
 TelemetryStore::TelemetryStore(QObject *parent)
     : QObject(parent),
@@ -26,6 +82,7 @@ TelemetryStore::TelemetryStore(QObject *parent)
       m_lastCommand("None"),
       m_commandAck("Waiting")
 {
+    m_mapClock.start();
     m_waypointPoints = {
         QPointF(0.14, 0.20),
         QPointF(0.28, 0.32),
@@ -459,6 +516,7 @@ void TelemetryStore::setTransportHealth(bool telemetryFresh, bool heartbeatFresh
 
 void TelemetryStore::invalidateVehicleData()
 {
+    resetMapReception();
     // 链路一断，上一次收到的遥测就不再代表飞机现在的状态，必须作废。
     //
     // 换电池时最明显：拔电池 -> 飞机断电 -> 插新电池 -> 机载重启。bridge 大约 +5s
@@ -692,28 +750,175 @@ QString TelemetryStore::gpsStatusName(int gpsStatus) const
     return names.value(gpsStatus, "GPS_UNKNOWN");
 }
 
-void TelemetryStore::applyGridMap(const QVariantMap &payload)
+qint64 TelemetryStore::mapArrivalTime(qint64 suppliedTime) const
 {
-    m_gmOriginX = payload.value("gm_origin_x").toFloat();
-    m_gmOriginY = payload.value("gm_origin_y").toFloat();
-    m_gmResolution = payload.value("gm_resolution").toFloat();
-    m_gmWidth = payload.value("gm_width").toInt();
-    m_gmHeight = payload.value("gm_height").toInt();
-    m_gmSliceZ = payload.value("gm_slice_z").toFloat();
+    return suppliedTime >= 0 ? suppliedTime : m_mapClock.elapsed();
+}
 
-    QByteArray rle = payload.value("gm_data").toByteArray();
-    const int total = m_gmWidth * m_gmHeight;
-    m_gmCells.resize(total);
-    m_gmCells.fill(0);
+void TelemetryStore::resetMapReception()
+{
+    // Preserve the last complete picture across a link interruption, but no
+    // partial snapshot or sequence from the previous connection may survive.
+    m_voxelAssembly = {};
+    m_voxelSequences.clear();
+    m_lastVoxelProgressMs = -ZenithProtocol::VoxelMap::kAssemblyTimeoutMs - 1;
+}
 
-    int cell_idx = 0;
-    for (int i = 0; i + 1 < rle.size() && cell_idx < total; i += 2) {
-        uint8_t val = static_cast<uint8_t>(rle[i]);
-        uint8_t run = static_cast<uint8_t>(rle[i + 1]);
-        for (int r = 0; r < run && cell_idx < total; ++r)
-            m_gmCells[cell_idx++] = val;
+bool TelemetryStore::applyVoxelMap(const QVariantMap &payload, int senderId, qint64 receivedAtMs)
+{
+    using namespace ZenithProtocol::VoxelMap;
+    if (senderId < 0 || senderId > 255) return false;
+    VoxelMapSnapshot metadata;
+    metadata.vehicleId = senderId;
+    quint32 width = 0, height = 0, layers = 0, partIndex = 0, partCount = 0, encoding = 0;
+    if (!mapFloat(payload, "vm_origin_x", metadata.originX)
+        || !mapFloat(payload, "vm_origin_y", metadata.originY)
+        || !mapFloat(payload, "vm_xy_resolution", metadata.resolution)
+        || !mapFloat(payload, "vm_z_min", metadata.zMin)
+        || !mapFloat(payload, "vm_z_resolution", metadata.zResolution)
+        || !mapUnsigned(payload, "vm_width", 65535, width)
+        || !mapUnsigned(payload, "vm_height", 65535, height)
+        || !mapUnsigned(payload, "vm_layers", 32, layers)
+        || !mapUnsigned(payload, "vm_frame_id", std::numeric_limits<quint32>::max(), metadata.frameId)
+        || !mapUnsigned(payload, "vm_part_index", kMaxParts - 1, partIndex)
+        || !mapUnsigned(payload, "vm_part_count", kMaxParts, partCount)
+        || !mapUnsigned(payload, "vm_encoding", 1, encoding)) return false;
+    const quint64 columnCount = quint64(width) * height;
+    if (!width || !height || columnCount > kMaxColumns || !layers || encoding != 1
+        || !partCount || partIndex >= partCount || partCount > columnCount
+        || metadata.resolution <= 0 || metadata.zResolution <= 0
+        || !mapExtentFinite(metadata.originX, metadata.resolution, int(width))
+        || !mapExtentFinite(metadata.originY, metadata.resolution, int(height))
+        || !mapExtentFinite(metadata.zMin, metadata.zResolution, int(layers))) return false;
+    metadata.width = int(width);
+    metadata.height = int(height);
+    metadata.layers = int(layers);
+
+    const QVariant dataValue = payload.value("vm_data");
+    if (dataValue.typeId() != QMetaType::QByteArray) return false;
+    const QByteArray data = dataValue.toByteArray();
+    if (data.isEmpty() || data.size() > kMaxPartBytes || data.size() % 5 != 0) return false;
+    const quint32 legalBits = layers == 32 ? std::numeric_limits<quint32>::max()
+                                         : (quint32(1) << layers) - 1;
+    int partColumns = 0;
+    for (qsizetype i = 0; i < data.size(); i += 5) {
+        const quint32 mask = qFromLittleEndian<quint32>(data.constData() + i);
+        const quint8 run = static_cast<quint8>(data[i + 4]);
+        if (!run || (mask & ~legalBits) || quint64(partColumns + run) > columnCount) return false;
+        partColumns += run;
     }
 
+    const qint64 now = mapArrivalTime(receivedAtMs);
+    if (!m_voxelAssembly.parts.isEmpty()
+        && now - m_voxelAssembly.startedAtMs > kAssemblyTimeoutMs)
+        m_voxelAssembly = {};
+
+    auto &sequence = m_voxelSequences[senderId];
+    // No epoch exists on the wire: after a silent timeout (or link reset),
+    // a sender may restart its uint32 counter. Old staging bytes are discarded.
+    if (sequence.initialized && now - sequence.lastProgressMs > kAssemblyTimeoutMs) {
+        sequence.initialized = false;
+        if (m_voxelAssembly.metadata.vehicleId == senderId) m_voxelAssembly = {};
+    }
+    const quint32 delta = metadata.frameId - sequence.frameId;
+    const bool newer = !sequence.initialized || (delta != 0 && delta < 0x80000000u);
+    if (newer) {
+        sequence.initialized = true;
+        sequence.frameId = metadata.frameId;
+        sequence.lastProgressMs = now;
+        m_voxelAssembly = {};
+        m_voxelAssembly.metadata = metadata;
+        m_voxelAssembly.parts.resize(int(partCount));
+        m_voxelAssembly.startedAtMs = now;
+    } else if (metadata.frameId != sequence.frameId
+               || m_voxelAssembly.parts.isEmpty()
+               || m_voxelAssembly.metadata.vehicleId != senderId
+               || m_voxelAssembly.metadata.frameId != metadata.frameId) {
+        return false;
+    }
+
+    if (!sameVoxelMetadata(metadata, m_voxelAssembly.metadata)
+        || m_voxelAssembly.parts.size() != int(partCount)) {
+        m_voxelAssembly = {}; // false/conflicting headers poison this frame only
+        return false;
+    }
+    QByteArray & slot = m_voxelAssembly.parts[int(partIndex)];
+    if (!slot.isEmpty()) {
+        if (slot == data) return true; // duplicate does not extend the deadline
+        m_voxelAssembly = {};
+        return false;
+    }
+    if (quint64(m_voxelAssembly.decodedColumns + partColumns) > columnCount) {
+        m_voxelAssembly = {};
+        return false;
+    }
+    slot = data;
+    ++m_voxelAssembly.receivedParts;
+    m_voxelAssembly.decodedColumns += partColumns;
+    sequence.lastProgressMs = now;
+    if (m_voxelMapValid && m_voxelMap.vehicleId == senderId) m_lastVoxelProgressMs = now;
+    if (m_voxelAssembly.receivedParts != int(partCount)) return true;
+    if (quint64(m_voxelAssembly.decodedColumns) != columnCount) {
+        m_voxelAssembly = {};
+        return false;
+    }
+
+    QVector<quint32> columns(int(columnCount), 0);
+    int offset = 0;
+    for (const QByteArray &part : m_voxelAssembly.parts) {
+        for (qsizetype i = 0; i < part.size(); i += 5) {
+            const quint32 mask = qFromLittleEndian<quint32>(part.constData() + i);
+            const quint8 run = static_cast<quint8>(part[i + 4]);
+            for (int j = 0; j < run; ++j) columns[offset++] = mask;
+        }
+    }
+    metadata.columns = std::move(columns);
+    m_voxelMap = std::move(metadata);
+    m_voxelMapValid = true; // an all-zero complete snapshot is also valid
+    m_lastVoxelProgressMs = now;
+    m_voxelAssembly = {};
+    emit gridMapChanged();
+    return true;
+}
+
+void TelemetryStore::applyGridMap(const QVariantMap &payload, int senderId, qint64 receivedAtMs)
+{
+    using namespace ZenithProtocol::VoxelMap;
+    // No comparable sequence exists in GRIDMAP/11. Prefer an active 3D stream;
+    // permit deliberate legacy fallback only after that stream goes quiet.
+    if (m_voxelMapValid && (senderId == m_voxelMap.vehicleId || senderId == 0)
+        && mapArrivalTime(receivedAtMs) - m_lastVoxelProgressMs <= kAssemblyTimeoutMs) return;
+
+    float ox = 0, oy = 0, resolution = 0;
+    quint32 width = 0, height = 0;
+    if (!mapFloat(payload, "gm_origin_x", ox) || !mapFloat(payload, "gm_origin_y", oy)
+        || !mapFloat(payload, "gm_resolution", resolution) || resolution <= 0
+        || !mapUnsigned(payload, "gm_width", 65535, width, true)
+        || !mapUnsigned(payload, "gm_height", 65535, height, true)
+        || quint64(width) * height > kMaxColumns || (!width != !height)
+        || !mapExtentFinite(ox, resolution, int(width))
+        || !mapExtentFinite(oy, resolution, int(height))) return;
+    const int total = int(width * height);
+    const QByteArray rle = payload.value("gm_data").toByteArray();
+    if (rle.size() % 2 != 0 || rle.size() > total * 2) return;
+    QVector<uint8_t> cells(total, 0);
+    int offset = 0;
+    for (qsizetype i = 0; i < rle.size(); i += 2) {
+        const quint8 value = static_cast<quint8>(rle[i]);
+        const quint8 run = static_cast<quint8>(rle[i + 1]);
+        if (!run || offset + run > total) return;
+        for (int j = 0; j < run; ++j) cells[offset++] = value;
+    }
+    if (offset != total) return;
+    m_gmOriginX = ox;
+    m_gmOriginY = oy;
+    m_gmResolution = resolution;
+    m_gmWidth = int(width);
+    m_gmHeight = int(height);
+    m_gmSliceZ = payload.value("gm_slice_z").toFloat();
+    m_gmCells = std::move(cells);
+    m_voxelMapValid = false;
+    m_voxelMap = {};
     emit gridMapChanged();
 }
 

@@ -5,6 +5,8 @@
 #include <QVariantMap>
 #include <QByteArray>
 #include <QVector>
+#include <QElapsedTimer>
+#include <QHash>
 
 class TelemetryStore : public QObject
 {
@@ -92,7 +94,20 @@ public:
     void setWaypointPoints(const QList<QPointF> &points);
     void setDesiredReference(double posX, double posY, double posZ, double velX, double velY, double velZ);
 
-    void applyGridMap(const QVariantMap &payload);
+    // Optional monotonic arrival time supports offline packet replay/tests.
+    void applyGridMap(const QVariantMap &payload, int senderId = 0, qint64 receivedAtMs = -1);
+    bool applyVoxelMap(const QVariantMap &payload, int senderId, qint64 receivedAtMs = -1);
+
+    struct VoxelMapSnapshot {
+        float originX = 0, originY = 0, resolution = 0.15f;
+        float zMin = -0.6f, zResolution = 0.15f;
+        int width = 0, height = 0, layers = 0;
+        int vehicleId = -1;
+        quint32 frameId = 0;
+        QVector<quint32> columns;
+    };
+    bool voxelMapValid() const { return m_voxelMapValid; }
+    const VoxelMapSnapshot &voxelMap() const { return m_voxelMap; }
     float gridMapOriginX() const { return m_gmOriginX; }
     float gridMapOriginY() const { return m_gmOriginY; }
     float gridMapResolution() const { return m_gmResolution; }
@@ -145,6 +160,21 @@ signals:
     void plannedPathChanged();
 
 private:
+    struct VoxelMapAssembly {
+        VoxelMapSnapshot metadata;
+        QVector<QByteArray> parts;
+        qint64 startedAtMs = 0;
+        int receivedParts = 0;
+        int decodedColumns = 0;
+    };
+    struct VoxelMapSequence {
+        quint32 frameId = 0;
+        qint64 lastProgressMs = 0;
+        bool initialized = false;
+    };
+    qint64 mapArrivalTime(qint64 suppliedTime) const;
+    void resetMapReception();
+
     // 链路断开后作废车辆遥测缓存，避免把上一次的数据当成当前值显示
     void invalidateVehicleData();
 
@@ -241,6 +271,15 @@ private:
     float m_gmOriginX = 0, m_gmOriginY = 0, m_gmResolution = 0.15f, m_gmSliceZ = 0;
     int m_gmWidth = 0, m_gmHeight = 0;
     QVector<uint8_t> m_gmCells;
+
+    QElapsedTimer m_mapClock;
+    VoxelMapSnapshot m_voxelMap;
+    bool m_voxelMapValid = false;
+    VoxelMapAssembly m_voxelAssembly;
+    // A bounded one-snapshot staging buffer; per-vehicle watermarks prevent
+    // preempted or delayed frames from taking it back over.
+    QHash<int, VoxelMapSequence> m_voxelSequences;
+    qint64 m_lastVoxelProgressMs = 0;
 
     QVector<TrailPt> m_trail3D;
     QVector<TrailPt> m_plannedPath;

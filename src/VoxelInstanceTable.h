@@ -43,6 +43,8 @@ public slots:
 
 protected:
     QByteArray getInstanceBuffer(int *instanceCount) override {
+        if (m_store && m_store->voxelMapValid())
+            return getVoxelMapBuffer(instanceCount);
         if (!m_store || !m_store->gridMapValid()) {
             setVoxelCount(0);
             *instanceCount = 0;
@@ -115,6 +117,42 @@ protected:
     }
 
 private:
+    QByteArray getVoxelMapBuffer(int *instanceCount) {
+        const auto &map = m_store->voxelMap();
+        int count = 0;
+        for (quint32 mask : map.columns)
+            for (; mask; mask &= mask - 1) ++count;
+        QByteArray buffer(count * int(sizeof(InstanceTableEntry)), Qt::Uninitialized);
+        char *dst = buffer.data();
+        const QVector3D scale(map.resolution * 0.01f * kCubeFillRatio,
+                              map.zResolution * 0.01f * kCubeFillRatio,
+                              map.resolution * 0.01f * kCubeFillRatio);
+        for (qsizetype index = 0; index < map.columns.size(); ++index) {
+            const quint32 mask = map.columns[index];
+            if (!mask) continue;
+            const float x = map.originX + (float(index % map.width) + 0.5f) * map.resolution;
+            const float y = map.originY + (float(index / map.width) + 0.5f) * map.resolution;
+            for (int layer = 0; layer < map.layers; ++layer) {
+                if (!(mask & (quint32(1) << layer))) continue;
+                const float z = map.zMin + (float(layer) + 0.5f) * map.zResolution;
+                // Clamp the colour palette, never the physical voxel height.
+                const float t = qBound(0.0f, (z - kHeightMin) / (kHeightMax - kHeightMin), 1.0f);
+                float cr, cg, cb;
+                if (t < 0.25f)      { const float s = t / 0.25f; cr = 0; cg = s; cb = 1; }
+                else if (t < 0.5f)  { const float s = (t - 0.25f) / 0.25f; cr = 0; cg = 1; cb = 1 - s; }
+                else if (t < 0.75f) { const float s = (t - 0.5f) / 0.25f; cr = s; cg = 1; cb = 0; }
+                else               { const float s = (t - 0.75f) / 0.25f; cr = 1; cg = 1 - s; cb = 0; }
+                const auto entry = calculateTableEntry(
+                    QVector3D(x, z, -y), scale, QVector3D(), QColor::fromRgbF(cr, cg, cb, 0.9f), {});
+                memcpy(dst, &entry, sizeof(entry));
+                dst += sizeof(entry);
+            }
+        }
+        setVoxelCount(count);
+        *instanceCount = count;
+        return buffer;
+    }
+
     // getInstanceBuffer() 跑在渲染同步阶段，不能在这里同步改 QML 属性，
     // 否则 HUD 的 binding 会在错误的线程/时机被求值。排队到事件循环里发。
     void setVoxelCount(int n) {

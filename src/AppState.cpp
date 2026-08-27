@@ -90,7 +90,10 @@ AppState::AppState(QObject *parent)
             m_telemetryStore->applyCustomDataSegment(payload);
             break;
         case ZenithProtocol::GRIDMAP:
-            m_telemetryStore->applyGridMap(payload);
+            m_telemetryStore->applyGridMap(payload, robotId);
+            break;
+        case ZenithProtocol::VOXELMAP:
+            m_telemetryStore->applyVoxelMap(payload, robotId);
             break;
         case ZenithProtocol::PLANNEDPATH:
             m_telemetryStore->applyPlannedPath(payload);
