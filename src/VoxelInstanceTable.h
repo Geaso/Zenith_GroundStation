@@ -4,6 +4,7 @@
 #include <QColor>
 #include <QVector3D>
 #include <QVector>
+#include <cmath>
 #include "TelemetryStore.h"
 
 class VoxelInstanceTable : public QQuick3DInstancing
@@ -19,6 +20,19 @@ public:
     static constexpr float kHeightMax = 3.0f;
     // 图二验收基线：体素之间保留 10% 缝隙，避免相邻格黏成整块平面。
     static constexpr float kCubeFillRatio = 0.9f;
+
+    // 按用户新选择改为蓝→青→绿→黄，取代旧红端；2.125m 起固定黄色。
+    // 黄色仅表示高度，不表示安全或可通行；只钳颜色，不改变真实几何。
+    static QColor heightColor(float worldZ) {
+        // 非有限颜色输入回退蓝色，几何有效性仍由原数据链路判定。
+        if (!std::isfinite(worldZ)) worldZ = kHeightMin;
+        const float t = qBound(0.0f, (worldZ - kHeightMin) / (kHeightMax - kHeightMin), 0.75f);
+        if (t < 0.25f)
+            return QColor::fromRgbF(0.0f, t / 0.25f, 1.0f, 0.9f);
+        if (t < 0.5f)
+            return QColor::fromRgbF(0.0f, 1.0f, 1.0f - (t - 0.25f) / 0.25f, 0.9f);
+        return QColor::fromRgbF((t - 0.5f) / 0.25f, 1.0f, 0.0f, 0.9f);
+    }
 
     explicit VoxelInstanceTable(QQuick3DObject *parent = nullptr) : QQuick3DInstancing(parent) {}
 
@@ -87,21 +101,12 @@ protected:
                 // 0.5m、整根柱子被压到 3.0/3.5 高。
                 float worldZ = kHeightMin + t * (kHeightMax - kHeightMin);
 
-                // 图二验收基线：使用完整量化高度 t 映射颜色。不要把颜色区间
-                // 截到 1.5m，否则 SUPER 的高处障碍会全部饱和成同一片红色。
-                // height → color: blue → cyan → green → yellow → red
-                float cr, cg, cb;
-                if (t < 0.25f)      { float s = t/0.25f;          cr=0;   cg=s;   cb=1;   }
-                else if (t < 0.5f)  { float s=(t-0.25f)/0.25f;    cr=0;   cg=1;   cb=1-s; }
-                else if (t < 0.75f) { float s=(t-0.5f)/0.25f;     cr=s;   cg=1;   cb=0;   }
-                else                { float s=(t-0.75f)/0.25f;     cr=1;   cg=1-s; cb=0;   }
-
                 // ENU→Qt3D: x=East, y=Up(Z), z=-North(-Y)
                 auto entry = calculateTableEntry(
                     QVector3D(worldX, worldZ, -worldY),
                     QVector3D(cubeScale, cubeScale, cubeScale),
                     QVector3D(0, 0, 0),
-                    QColor::fromRgbF(cr, cg, cb, 0.9f),
+                    heightColor(worldZ),
                     {}
                 );
                 memcpy(dst, &entry, sizeof(InstanceTableEntry));
@@ -135,15 +140,8 @@ private:
             for (int layer = 0; layer < map.layers; ++layer) {
                 if (!(mask & (quint32(1) << layer))) continue;
                 const float z = map.zMin + (float(layer) + 0.5f) * map.zResolution;
-                // Clamp the colour palette, never the physical voxel height.
-                const float t = qBound(0.0f, (z - kHeightMin) / (kHeightMax - kHeightMin), 1.0f);
-                float cr, cg, cb;
-                if (t < 0.25f)      { const float s = t / 0.25f; cr = 0; cg = s; cb = 1; }
-                else if (t < 0.5f)  { const float s = (t - 0.25f) / 0.25f; cr = 0; cg = 1; cb = 1 - s; }
-                else if (t < 0.75f) { const float s = (t - 0.5f) / 0.25f; cr = s; cg = 1; cb = 0; }
-                else               { const float s = (t - 0.75f) / 0.25f; cr = 1; cg = 1 - s; cb = 0; }
                 const auto entry = calculateTableEntry(
-                    QVector3D(x, z, -y), scale, QVector3D(), QColor::fromRgbF(cr, cg, cb, 0.9f), {});
+                    QVector3D(x, z, -y), scale, QVector3D(), heightColor(z), {});
                 memcpy(dst, &entry, sizeof(entry));
                 dst += sizeof(entry);
             }

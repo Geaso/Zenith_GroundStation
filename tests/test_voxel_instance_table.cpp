@@ -1,4 +1,4 @@
-// 锁定 20260825 栅格显示：方块保留 10% 间隙，颜色使用完整量化高度。
+// 保留 20260825 栅格几何；原蓝青绿黄配色从 2.125m 起固定黄色，不再进入红端。
 // 直接检查实例缓冲，不创建窗口、连接数传或发送飞行命令。
 #include "VoxelInstanceTable.h"
 #include "ZenithProtocol.h"
@@ -71,14 +71,14 @@ QVariantMap gridPayload(float resolution)
     };
 }
 
-QVector4D referenceColor(int code)
+QVector4D referenceHeightColor(float z)
 {
-    // 固定五个参考色，而不引用被测类中的常量或配色实现。
+    // 独立参考：保留原 -0.5m / 3.5m 归一化，只钳颜色到 t=0.75，不重缩低段。
     const QVector3D stops[] = {
-        {0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}
+        {0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {1, 1, 0}
     };
-    const float offset = float(code - 1) * 4.0f / 254.0f;
-    const int segment = qMin(int(offset), 3);
+    const float offset = qBound(0.0f, (z + 0.5f) / 3.5f, 0.75f) * 4.0f;
+    const int segment = qMin(int(offset), 2);
     const float fraction = offset - segment;
     const QVector3D rgb = stops[segment] * (1.0f - fraction)
         + stops[segment + 1] * fraction;
@@ -104,13 +104,15 @@ bool verifyGrid(float resolution)
                  "zero is omitted and every occupied cell produces one instance",
                  -1, resolution)) return false;
 
+    const auto yellow = TestVoxelInstanceTable::packedColor(QColor::fromRgbF(1, 1, 0, 0.9f));
     for (int code = 1; code <= 255; ++code) {
         Entry entry;
         std::memcpy(&entry, buffer.constData() + (code - 1) * sizeof(Entry), sizeof(Entry));
 
         // 量化码 1/128/255 对应 -0.5/1.25/3.0m；ENU 的北向映射到 -Z。
+        const float physicalZ = -0.5f + float(code - 1) / 254.0f * 3.5f;
         const QVector3D position(2.0f + (code % 16 + 0.5f) * resolution,
-                                 -0.5f + float(code - 1) * 3.5f / 254.0f,
+                                 physicalZ,
                                  3.0f - (code / 16 + 0.5f) * resolution);
         if (!require(close(entry.getPosition(), position),
                      "height decoding and ENU cell-center coordinates match the reference",
@@ -121,16 +123,16 @@ bool verifyGrid(float resolution)
         if (!require(close(entry.getScale(), {scale, scale, scale}),
                      "cube side remains 90 percent of the map resolution",
                      code, resolution)) return false;
-        if (!require(close(entry.color, referenceColor(code)),
-                     "blue-cyan-green-yellow-red spans the complete encoded height range",
+        if (!require(close(entry.color, referenceHeightColor(physicalZ)),
+                     "Msg11 preserves the original low palette and clamps only color at yellow",
                      code, resolution)) return false;
-
-        // 两个高于 1.5m 的中间高度仍须保留不同颜色，不能都被截成顶端红色。
-        if (code == 160 || code == 224) {
-            if (!require(!close(entry.color, referenceColor(255)),
-                         "SUPER obstacles above 1.5m do not all saturate to red",
-                         code, resolution)) return false;
-        }
+        if (!require(entry.color.x() <= entry.color.y() + 0.00002f,
+                     "Msg11 never enters the yellow-to-red segment at any height",
+                     code, resolution)) return false;
+        // 191/192 分别在 2.125m 两侧：高处保持黄色，低处不能提前变黄。
+        if (!require(close(entry.color, yellow) == (code >= 192),
+                     "Msg11 turns yellow exactly when decoded height reaches 2.125m",
+                     code, resolution)) return false;
     }
 
     table.setStore(nullptr);
@@ -157,16 +159,6 @@ QVariantMap voxelPayload(quint32 frame, const QByteArray &data, int width = 2, i
             {"vm_part_index", part}, {"vm_part_count", parts}, {"vm_data", data}, {"vm_encoding", 1}};
 }
 
-QVector4D referenceHeightColor(float z)
-{
-    const QVector3D stops[] = {{0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {1, 1, 0}, {1, 0, 0}};
-    const float offset = qBound(0.0f, (z + 0.5f) / 3.5f, 1.0f) * 4;
-    const int segment = qMin(int(offset), 3);
-    const float fraction = offset - segment;
-    const auto rgb = stops[segment] * (1 - fraction) + stops[segment + 1] * fraction;
-    return TestVoxelInstanceTable::packedColor(QColor::fromRgbF(rgb.x(), rgb.y(), rgb.z(), 0.9f));
-}
-
 bool verifyVoxelGeometry()
 {
     TelemetryStore store;
@@ -188,19 +180,106 @@ bool verifyVoxelGeometry()
                      "actual layer center and ENU axes, including low obstacles")) return false;
         if (!require(close(entry.getScale(), {0.00135f, 0.00135f, 0.00135f}),
                      "multi-Z voxels keep 90 percent fill")) return false;
-        if (!require(close(entry.color, referenceHeightColor(z)), "physical height uses full-range palette")) return false;
+        if (!require(close(entry.color, referenceHeightColor(z)), "Msg13 physical height uses the yellow-capped palette")) return false;
     }
     auto high = voxelPayload(11, columnRun(1, 2));
     high["vm_z_min"] = 4.0f;
     if (!require(store.applyVoxelMap(high, 214, 101), "height above palette range remains valid")) return false;
     const auto highBytes = table.getInstanceBuffer(&count);
+    if (!require(count == 2 && table.voxelCount() == 2 && highBytes.size() == 2 * int(sizeof(Entry)),
+                 "height above palette range preserves both occupied cells")) return false;
     Entry highEntry;
     std::memcpy(&highEntry, highBytes.constData(), sizeof(highEntry));
     if (!require(close(highEntry.getPosition().y(), 4.075f), "palette clamp does not clamp geometry")) return false;
+    if (!require(close(highEntry.color, TestVoxelInstanceTable::packedColor(QColor::fromRgbF(1, 1, 0, 0.9f))),
+                 "height above 3m is yellow, not red")) return false;
     if (!require(store.applyVoxelMap(voxelPayload(12, columnRun(0, 2)), 214, 102),
                  "complete empty occupancy accepted")) return false;
     return require(table.getInstanceBuffer(&count).isEmpty() && count == 0 && store.voxelMapValid(),
                    "all-zero complete map clears obstacles without legacy fallback");
+}
+
+bool verifyVoxelHeightPalette()
+{
+    struct HeightCase {
+        const char *name;
+        float zMin;
+        float zResolution;
+        int layers;
+        quint32 mask;
+    };
+    const HeightCase cases[] = {
+        // 精确命中 -0.5 / 0.375 / 1.25 / 2.125 / 3.0 / 3.375m，含第 32 层。
+        {"palette anchors and layer 31", -0.5625f, 0.125f, 32,
+         (1u << 0) | (1u << 7) | (1u << 14) | (1u << 21) | (1u << 28) | (1u << 31)},
+        // 二进制可精确表达的步长，分别命中黄色阈值及 3m 的下方、边界、上方。
+        {"yellow threshold neighbors", 2.125f - 3.0f / 1024.0f, 1.0f / 512.0f, 3, 7u},
+        {"three-meter neighbors", 3.0f - 3.0f / 128.0f, 1.0f / 64.0f, 3, 7u},
+        {"custom high multi-layer map", 4.0f, 0.3f, 5, (1u << 0) | (1u << 2) | (1u << 4)},
+        {"custom heights below palette minimum", -1.0f, 0.125f, 4, 15u},
+    };
+    TelemetryStore store;
+    TestVoxelInstanceTable table;
+    table.setStore(&store);
+    using Entry = QQuick3DInstancing::InstanceTableEntry;
+    const auto yellow = TestVoxelInstanceTable::packedColor(QColor::fromRgbF(1, 1, 0, 0.9f));
+    quint32 frame = 1000;
+    for (const auto &test : cases) {
+        qInfo("Msg13 instance palette case: %s", test.name);
+        // 两个多层列、一个空列、一个顶层列；同时锁定两行 ENU 和非等轴体素。
+        const QVector<quint32> columns{test.mask, 0u, quint32(1) << (test.layers - 1), test.mask};
+        QByteArray runs;
+        for (quint32 mask : columns) runs += columnRun(mask, 1);
+        auto payload = voxelPayload(frame++, runs, 2, 2);
+        payload["vm_origin_x"] = -2.0f;
+        payload["vm_origin_y"] = 3.0f;
+        payload["vm_xy_resolution"] = 0.2f;
+        payload["vm_z_min"] = test.zMin;
+        payload["vm_z_resolution"] = test.zResolution;
+        payload["vm_layers"] = test.layers;
+        if (!require(store.applyVoxelMap(payload, 214, 100), "valid custom Msg13 heights accepted")) return false;
+        const auto &map = store.voxelMap();
+        if (!require(map.columns == columns && map.layers == test.layers
+                     && close(map.zMin, test.zMin) && close(map.zResolution, test.zResolution),
+                     "color clamp preserves custom height metadata and all layer masks")) return false;
+        int count = -1;
+        const auto bytes = table.getInstanceBuffer(&count);
+        const int expectedCount = 2 * int(qPopulationCount(test.mask)) + 1;
+        if (!require(count == expectedCount && table.voxelCount() == expectedCount
+                     && bytes.size() == expectedCount * int(sizeof(Entry)),
+                     "yellow voxels preserve all occupied bits, holes and multi-layer counts")) return false;
+        int index = 0;
+        for (int column = 0; column < columns.size(); ++column) {
+            for (int layer = 0; layer < test.layers; ++layer) {
+                if (!(columns[column] & (quint32(1) << layer))) continue;
+                Entry entry;
+                std::memcpy(&entry, bytes.constData() + index++ * sizeof(Entry), sizeof(entry));
+                const float physicalZ = test.zMin + (layer + 0.5f) * test.zResolution;
+                const QVector3D position(-2.0f + (column % 2 + 0.5f) * 0.2f, physicalZ,
+                                         -(3.0f + (column / 2 + 0.5f) * 0.2f));
+                if (!require(close(entry.getPosition(), position),
+                             "Msg13 keeps physical Z including heights above 3m and ENU cell centers",
+                             layer, test.zResolution)) return false;
+                const auto scale = entry.getScale();
+                const QVector3D fill(scale.x() * 100.0f / 0.2f,
+                                     scale.y() * 100.0f / test.zResolution,
+                                     scale.z() * 100.0f / 0.2f);
+                if (!require(close(fill, {0.9f, 0.9f, 0.9f}),
+                             "Msg13 keeps 0.9 fill independently for horizontal and vertical resolution",
+                             layer, test.zResolution)) return false;
+                if (!require(close(entry.color, referenceHeightColor(physicalZ)),
+                             "Msg13 uses the unchanged low palette with yellow saturation",
+                             layer, test.zResolution)) return false;
+                if (!require(entry.color.x() <= entry.color.y() + 0.00002f,
+                             "Msg13 never enters the red endpoint with custom height ranges",
+                             layer, test.zResolution)) return false;
+                if (!require(close(entry.color, yellow) == (physicalZ >= 2.125f),
+                             "Msg13 yellow starts at 2.125m and persists through and above 3m",
+                             layer, test.zResolution)) return false;
+            }
+        }
+    }
+    return true;
 }
 
 bool verifyReassembly()
@@ -553,7 +632,7 @@ int main(int argc, char **argv)
     }
 
     if (!verifyGrid(0.1f) || !verifyGrid(0.25f)) return 1;
-    if (!verifyVoxelGeometry() || !verifyReassembly() || !verifyInvalidMaps()
+    if (!verifyVoxelGeometry() || !verifyVoxelHeightPalette() || !verifyReassembly() || !verifyInvalidMaps()
         || !verifyWireCodec() || !verifyLimits()) return 1;
 
     qInfo("Voxel instance table reference rendering tests passed");
