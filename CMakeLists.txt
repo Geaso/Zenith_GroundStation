@@ -131,6 +131,7 @@ qt_add_executable(ZenithMavlinkProbe
     src/TelemetryStore.cpp src/TelemetryStore.h
 )
 target_include_directories(ZenithMavlinkProbe PRIVATE src include)
+set_target_properties(ZenithMavlinkProbe PROPERTIES WIN32_EXECUTABLE FALSE)
 target_include_directories(ZenithMavlinkProbe SYSTEM PRIVATE third_party)
 target_link_libraries(ZenithMavlinkProbe PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::SerialPort)
 

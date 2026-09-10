@@ -23,7 +23,11 @@ int main(int argc, char **argv)
     QCoreApplication::setApplicationName("ZenithMavlinkProbe");
     QCommandLineParser parser;
     parser.setApplicationDescription("Production MAVLink2 TCP/telemetry probe for an isolated test bridge. Never sends arming, movement, task start or parameter writes.");
-    parser.addHelpOption();
+    // Qt's automatic help/error exit path can use a Windows message box when
+    // the launcher redirects handles instead of attaching an interactive
+    // console. Keep this tool's output entirely on stdout/stderr.
+    parser.addOption(QCommandLineOption(QStringList{"h", "help", "help-all", "?"},
+                                        "Display this help and exit."));
     parser.addPositionalArgument("ip", "Explicit bridge IP address.");
     parser.addPositionalArgument("port", "Explicit isolated bridge TCP port.");
     parser.addPositionalArgument("uav_id", "Logical Zenith vehicle ID (1..254; 255 is the GCS).");
@@ -40,12 +44,16 @@ int main(int argc, char **argv)
         {"require-grid-map", "Also require a decoded grid map."},
         {"require-planned-path", "Also require a decoded nonempty planned path."}
     });
-    parser.process(app);
-    const auto args = parser.positionalArguments();
     auto badArgument = [](const QString &message) {
         QTextStream(stderr) << message << Qt::endl;
         return 2;
     };
+    if (!parser.parse(QCoreApplication::arguments())) return badArgument(parser.errorText());
+    if (parser.isSet("help")) {
+        QTextStream(stdout) << parser.helpText();
+        return 0;
+    }
+    const auto args = parser.positionalArguments();
     if (args.size() != 3) return badArgument("Expected: ZenithMavlinkProbe [options] <ip> <port> <uav_id>");
     bool portOk = false, idOk = false, timeoutOk = false, fcuOk = true;
     const int port = args[1].toInt(&portOk), id = args[2].toInt(&idOk);
