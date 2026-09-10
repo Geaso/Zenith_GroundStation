@@ -1,3 +1,5 @@
+# HISTORICAL LEGACY PROTOCOL: archived am/JSON framing, not MAVLink2.
+# Not a validation tool for the current bridge; use ZenithMavlinkProbe and CTest.
 """
 Mock Jetson Bridge — simulates the Jetson communication bridge for ground station testing.
 

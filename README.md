@@ -15,6 +15,8 @@ Zenith 的 Windows 地面站，使用 Qt 6 / QML 和 C++，提供遥测显示、
 
 机载配套仓库：[Zenith_ws](https://github.com/Geaso/Zenith_ws)。
 
+串口和 TCP 链路统一使用 MAVLink 2。标准飞控消息用于公共遥测，Zenith 的任务、参数和地图使用 `V2_EXTENSION`。迁移说明见 [docs/MAVLINK2.md](docs/MAVLINK2.md)，更新或回退时须配套使用相同协议版本的机载 bridge。
+
 ## 构建与测试
 
 已使用的工具链是 Qt 6.6.3 MinGW 64 位和 MinGW 13.1。将 Qt 与编译器的 `bin` 目录加入当前终端 PATH 后：

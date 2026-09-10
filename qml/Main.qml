@@ -652,6 +652,7 @@ ApplicationWindow {
                             }
                         }
                         Column {
+                            visible: false // Saved legacy profiles retain this value; MAVLink shares the TCP session.
                             spacing: 3
                             Text { text: "Heartbeat"; color: "#8B949E"; font.pixelSize: 10 }
                             TextField {

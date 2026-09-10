@@ -4,7 +4,6 @@
 #include <QStringList>
 #include <QByteArray>
 #include <QVariantMap>
-#include <functional>
 
 namespace ZenithProtocol {
 
@@ -47,6 +46,7 @@ enum MessageId {
     BSPLINE = 111,
     MULTIBSPLINES = 112,
     CUSTOMDATASEGMENT_1 = 113,
+    PROTOCOL_ACK = 114,
 
     CONNECTSTATE = 201,
     MODESELECTION = 202,
@@ -70,17 +70,6 @@ constexpr int kMaxParts = 64;
 constexpr int kMaxPartBytes = 6000;
 constexpr int kAssemblyTimeoutMs = 10000;
 }
-
-// Pure codec entry point: offline tests never need to open a transport.
-struct FrameDecodeResult {
-    int msgId = -1;
-    int robotId = 0;
-    QVariantMap payload;
-    int totalBytes = 0;
-    bool valid = false;
-};
-FrameDecodeResult decodeFrame(const QByteArray &buffer);
-int consumeFrames(QByteArray &buffer, const std::function<void(const FrameDecodeResult &)> &onFrame);
 
 enum LocationSource {
     MOCAP = 0,

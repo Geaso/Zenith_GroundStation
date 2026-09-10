@@ -132,7 +132,7 @@ Item {
                     Text { text: "下载参数"; color: "#8B949E"; font.pixelSize: 11; font.bold: true }
                     Rectangle { width: parent.width; height: 1; color: "#262C36" }
                     PrimaryButton {
-                        width: parent.width; height: 30; text: "飞控参数"; fillColor: "#1F4E8C"
+                        width: parent.width; height: 30; text: "控制器参数"; fillColor: "#1F4E8C"
                         onClicked: appState.requestParams(1)
                     }
                     PrimaryButton {

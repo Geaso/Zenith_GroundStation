@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# HISTORICAL LEGACY PROTOCOL: archived am/JSON framing, not MAVLink2.
+# Not a validation tool for the current bridge; use ZenithMavlinkProbe and CTest.
 """
 Zenith 串口帧率 & 带宽测试工具
 从地面站端(Windows)监听数传接收到的 Zenith 帧，统计各 msg_id 的帧率和字节吞吐量。

@@ -3,13 +3,13 @@
 #include <QObject>
 #include <QSerialPort>
 #include <QSerialPortInfo>
-#include <QTcpServer>
 #include <QTcpSocket>
 #include <QTimer>
 #include <QUdpSocket>
 #include <QVariantMap>
 
 #include "Lr24RadioProtocol.h"
+#include "ZenithMavlinkCodec.h"
 
 enum class TransportMode { Network, Serial };
 
@@ -131,22 +131,12 @@ private slots:
     void onRadioPairingTimeout();
 
 private:
-    struct DecodedFrame {
-        int msgId = -1;
-        int robotId = 0;
-        QVariantMap payload;
-        int totalBytes = 0;
-        bool valid = false;
-    };
-
-    QByteArray packFrame(int msgId, int robotId, const QVariantMap &payload) const;
-    DecodedFrame tryDecodeFrame(const QByteArray &buffer) const;
-    quint16 crc16Arc(const QByteArray &data) const;
+    QByteArray packFrame(int msgId, int robotId, const QVariantMap &payload);
+    ZenithMavlinkCodec m_codec;
     void appendLog(const QString &line);
     void updateLinkStates();
-    int processBuffer(QByteArray &buffer);
+    int processBuffer(QByteArray &buffer, int channel = 0);
     void processFrame(const QByteArray &frame);
-    void handleHeartbeatConnection(QTcpSocket *socket);
     void resetFreshness();
     void noteUdpRx();
     void noteHeartbeatRx();
@@ -215,10 +205,6 @@ private:
     quint32 m_heartbeatCount = 0;
     static constexpr int kHeartbeatIntervalMs = 1000;
 
-    // Heartbeat receiving (from Jetson)
-    QTcpServer m_heartbeatServer;
-    QTcpSocket *m_heartbeatPeer = nullptr;
-    QByteArray m_heartbeatBuffer;
     QTimer m_linkMonitorTimer;
 
     qint64 m_lastUdpRxMs = 0;

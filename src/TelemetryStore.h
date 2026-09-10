@@ -182,6 +182,7 @@ private:
     QString gpsStatusName(int gpsStatus) const;
     QList<QPointF> m_pathPoints;
     QList<QPointF> m_waypointPoints;
+    QVariantMap m_telemetryFields;
     QString m_vehicleName;
     QString m_flightStatus;
     QString m_flightMode;

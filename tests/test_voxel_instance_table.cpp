@@ -2,6 +2,7 @@
 // 直接检查实例缓冲，不创建窗口、连接数传或发送飞行命令。
 #include "VoxelInstanceTable.h"
 #include "ZenithProtocol.h"
+#include "LegacyFrameCodec.h"
 
 #include <QCoreApplication>
 #include <QtMath>

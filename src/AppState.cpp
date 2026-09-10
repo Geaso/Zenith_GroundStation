@@ -82,6 +82,14 @@ AppState::AppState(QObject *parent)
         case ZenithProtocol::UAVCONTROLSTATE:
             m_telemetryStore->applyUavControlState(payload);
             break;
+        case ZenithProtocol::PROTOCOL_ACK: {
+            const QString status = payload.value("status").toString();
+            m_telemetryStore->setCommandFeedback(
+                QString("Request %1 / transaction %2")
+                    .arg(payload.value("request_kind").toInt())
+                    .arg(payload.value("transaction_id").toULongLong()), status);
+            break;
+        }
         case ZenithProtocol::PARAMSETTINGS:
             m_paramStore->applyParamSettings(payload);
             break;

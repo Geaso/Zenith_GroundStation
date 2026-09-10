@@ -82,5 +82,9 @@ int main(int argc, char *argv[])
         Qt::QueuedConnection);
     engine.load(url);
 
+    // Offline CI checks the actual compiled QML module without starting a link.
+    if (app.arguments().contains(QStringLiteral("--check-ui")))
+        return engine.rootObjects().isEmpty() ? 1 : 0;
+
     return app.exec();
 }

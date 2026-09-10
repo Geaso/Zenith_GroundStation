@@ -1,3 +1,5 @@
+# HISTORICAL LEGACY PROTOCOL: archived am/JSON framing, not MAVLink2.
+# Not a validation tool for the current bridge; use ZenithMavlinkProbe and CTest.
 """
 End-to-end integration test against the real Jetson communication bridge.
 

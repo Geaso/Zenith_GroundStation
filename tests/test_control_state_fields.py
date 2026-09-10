@@ -1,3 +1,5 @@
+# HISTORICAL LEGACY PROTOCOL: archived am/JSON framing, not MAVLink2.
+# Not a validation tool for the current bridge; use ZenithMavlinkProbe and CTest.
 """
 Verify that UAVControlState (msgId=9) from Jetson bridge now includes
 the new state machine fields: exec_state, mission_mode, active_command_source,

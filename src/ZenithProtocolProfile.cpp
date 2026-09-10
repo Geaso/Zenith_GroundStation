@@ -9,7 +9,7 @@ ZenithProtocolProfile::ZenithProtocolProfile(QObject *parent)
 
 QString ZenithProtocolProfile::protocolName() const
 {
-    return "Zenith";
+    return "Zenith MAVLink 2";
 }
 
 QString ZenithProtocolProfile::namespacePrefix() const
@@ -55,14 +55,15 @@ QVariantList ZenithProtocolProfile::messageTypes() const
         const char *name;
         const char *direction;
     } items[] = {
-        {ZenithProtocol::UAVSTATE, "UAVSTATE", "Vehicle -> Ground"},
-        {ZenithProtocol::TEXTINFO, "TEXTINFO", "Vehicle -> Ground"},
-        {ZenithProtocol::HEARTBEAT, "HEARTBEAT", "Bidirectional"},
-        {ZenithProtocol::UAVCONTROLSTATE, "UAVCONTROLSTATE", "Vehicle -> Ground"},
-        {ZenithProtocol::UAVCOMMAND, "UAVCOMMAND", "Ground -> Vehicle"},
-        {ZenithProtocol::UAVSETUP, "UAVSETUP", "Ground -> Vehicle"},
-        {ZenithProtocol::PARAMSETTINGS, "PARAMSETTINGS", "Bidirectional"},
-        {ZenithProtocol::MODESELECTION, "MODESELECTION", "Ground -> Vehicle"}
+        {0, "HEARTBEAT", "Bidirectional"},
+        {1, "SYS_STATUS", "Vehicle -> Ground"},
+        {24, "GPS_RAW_INT", "Vehicle -> Ground"},
+        {30, "ATTITUDE", "Vehicle -> Ground"},
+        {32, "LOCAL_POSITION_NED", "Vehicle -> Ground"},
+        {33, "GLOBAL_POSITION_INT", "Vehicle -> Ground"},
+        {147, "BATTERY_STATUS", "Vehicle -> Ground"},
+        {248, "V2_EXTENSION (Zenith)", "Bidirectional"},
+        {253, "STATUSTEXT", "Vehicle -> Ground"}
     };
 
     for (const Item &item : items) {

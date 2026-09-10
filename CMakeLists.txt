@@ -35,7 +35,9 @@ set(APP_SOURCES
     src/ParamStore.cpp
     src/ParamStore.h
     src/ZenithProtocol.h
-    src/ZenithMsgPack.h
+    src/ZenithMavlinkCodec.cpp
+    src/ZenithMavlinkCodec.h
+    src/ManualMoveCommand.h
     src/GridMapImageProvider.h
     src/VoxelInstanceTable.h
     src/TrailInstanceTable.h
@@ -66,7 +68,8 @@ qt_add_qml_module(${PROJECT_NAME}
         qml/pages/MapPage.qml
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE src)
+target_include_directories(${PROJECT_NAME} PRIVATE src include)
+target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE third_party)
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
@@ -119,7 +122,37 @@ add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
 qt_finalize_executable(${PROJECT_NAME})
 
 include(CTest)
+# Explicit manual integration target; never contacts a remote endpoint in CTest.
+qt_add_executable(ZenithMavlinkProbe
+    tools/mavlink_probe.cpp
+    src/ZenithMavlinkCodec.cpp src/ZenithMavlinkCodec.h
+    src/ZenithProtocolClient.cpp src/ZenithProtocolClient.h
+    src/Lr24RadioProtocol.cpp src/Lr24RadioProtocol.h
+    src/TelemetryStore.cpp src/TelemetryStore.h
+)
+target_include_directories(ZenithMavlinkProbe PRIVATE src include)
+target_include_directories(ZenithMavlinkProbe SYSTEM PRIVATE third_party)
+target_link_libraries(ZenithMavlinkProbe PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::SerialPort)
+
 if(BUILD_TESTING)
+    add_test(NAME qml_module_load COMMAND ZenithGroundStationQt --check-ui)
+    set_tests_properties(qml_module_load PROPERTIES
+        TIMEOUT 15
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_PLUGIN_PATH=$<TARGET_FILE_DIR:Qt6::Core>/../plugins")
+    qt_add_executable(MavlinkGroundStationTests
+        tests/test_mavlink_groundstation.cpp
+        src/CommandDispatcher.cpp src/CommandDispatcher.h
+        src/ParamStore.cpp src/ParamStore.h
+        src/ZenithMavlinkCodec.cpp src/ZenithMavlinkCodec.h
+        src/ZenithProtocolClient.cpp src/ZenithProtocolClient.h
+        src/Lr24RadioProtocol.cpp src/Lr24RadioProtocol.h
+        src/TelemetryStore.cpp src/TelemetryStore.h
+    )
+    target_include_directories(MavlinkGroundStationTests PRIVATE src include)
+    target_include_directories(MavlinkGroundStationTests SYSTEM PRIVATE third_party)
+    target_link_libraries(MavlinkGroundStationTests PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::SerialPort)
+    add_test(NAME mavlink_groundstation COMMAND MavlinkGroundStationTests)
+
     qt_add_executable(ScriptActionModelTests
         tests/test_script_action_model.cpp
         src/ScriptActionModel.cpp
@@ -143,18 +176,17 @@ if(BUILD_TESTING)
         src/VoxelInstanceTable.h
         src/TelemetryStore.cpp
         src/TelemetryStore.h
-        src/ZenithProtocolClient.cpp
-        src/ZenithProtocolClient.h
-        src/Lr24RadioProtocol.cpp
-        src/Lr24RadioProtocol.h
+        tests/legacy/LegacyFrameCodec.cpp
+        tests/legacy/LegacyMsgPack.h
     )
-    target_include_directories(VoxelInstanceTableTests PRIVATE src)
+    target_include_directories(VoxelInstanceTableTests PRIVATE src tests/legacy)
     target_link_libraries(VoxelInstanceTableTests PRIVATE Qt6::Core Qt6::Gui Qt6::Quick3D Qt6::Network Qt6::SerialPort)
     add_test(NAME voxel_instance_table COMMAND VoxelInstanceTableTests)
-    add_test(NAME voxelmap_production_wire COMMAND VoxelInstanceTableTests
+    add_test(NAME voxelmap_legacy_fixture COMMAND VoxelInstanceTableTests
         --wire-fixture "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/voxelmap_frame.bin" 3874)
-    set_tests_properties(voxel_instance_table voxelmap_production_wire PROPERTIES
+    set_tests_properties(voxel_instance_table voxelmap_legacy_fixture PROPERTIES
         ENVIRONMENT "QT_FORCE_STDERR_LOGGING=1")
+    set_tests_properties(voxelmap_legacy_fixture PROPERTIES LABELS "legacy")
 
     qt_add_executable(Lr24RadioProtocolTests
         tests/test_lr24_radio_protocol.cpp

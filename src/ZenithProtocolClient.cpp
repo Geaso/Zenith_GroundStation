@@ -4,7 +4,7 @@
 #include <QDebug>
 
 #include "ZenithProtocol.h"
-#include "ZenithMsgPack.h"
+
 
 #include <QAbstractSocket>
 #include <QDataStream>
@@ -19,123 +19,6 @@
 #include <cmath>
 #include <cstring>
 
-namespace {
-constexpr char kMagic0 = 0x61;
-constexpr char kMagic1 = 0x6D;
-constexpr int kFrameOverhead = 10;
-// 栅格帧最坏 35378 字节（133×133 格 × 2 字节 RLE）+ MsgPack 头，取 40KB 留余量。
-constexpr quint32 kMaxPayloadSize = 40960;
-// 重组缓冲上限必须大于单帧最大长度，否则大栅格帧在慢链路上还没收全就被当成
-// "链路噪声" 清掉，表现为栅格永远不刷新。
-constexpr int kMaxBufferSize = 65536;
-
-quint16 frameCrc16(const QByteArray &data)
-{
-    quint16 crc = 0;
-    for (unsigned char byte : data) {
-        crc ^= byte;
-        for (int i = 0; i < 8; ++i)
-            crc = (crc & 1) ? (crc >> 1) ^ 0xA001 : crc >> 1;
-    }
-    return crc;
-}
-
-// The legacy generic MsgPack decoder tolerates truncated strings/bins.
-// Parse the fixed VOXELMAP contract strictly, without changing other messages.
-class VoxelPayloadReader {
-public:
-    explicit VoxelPayloadReader(const QByteArray &bytes) : data(bytes) {}
-
-    bool decode(QVariantMap &out)
-    {
-        static const char *const names[] = {
-            "vm_origin_x", "vm_origin_y", "vm_xy_resolution", "vm_width", "vm_height",
-            "vm_z_min", "vm_z_resolution", "vm_layers", "vm_frame_id",
-            "vm_part_index", "vm_part_count", "vm_data", "vm_encoding"
-        };
-        quint64 tag = 0, count = 0;
-        if (!read(1, tag)) return false;
-        if ((tag & 0xf0) == 0x80) count = tag & 0x0f;
-        else if (tag == 0xde) { if (!read(2, count)) return false; }
-        else if (tag == 0xdf) { if (!read(4, count)) return false; }
-        else return false;
-        if (count != 13) return false;
-
-        quint32 seen = 0;
-        for (int i = 0; i < 13; ++i) {
-            quint32 key = 0;
-            if (!readUnsigned(key) || key < 80 || key > 92) return false;
-            const quint32 bit = quint32(1) << (key - 80);
-            if (seen & bit) return false;
-            seen |= bit;
-            QVariant value;
-            if (key == 80 || key == 81 || key == 82 || key == 85 || key == 86) {
-                double number = 0;
-                if (!readFloat(number)) return false;
-                value = number;
-            } else if (key == 91) {
-                quint64 length = 0;
-                if (!read(1, tag)) return false;
-                if (tag == 0xc4) { if (!read(1, length)) return false; }
-                else if (tag == 0xc5) { if (!read(2, length)) return false; }
-                else if (tag == 0xc6) { if (!read(4, length)) return false; }
-                else return false;
-                if (length == 0 || length > ZenithProtocol::VoxelMap::kMaxPartBytes
-                    || length % 5 != 0 || length > quint64(data.size() - pos)) return false;
-                value = data.mid(pos, qsizetype(length));
-                pos += qsizetype(length);
-            } else {
-                quint32 number = 0;
-                if (!readUnsigned(number)) return false;
-                value = number;
-            }
-            out.insert(QString::fromLatin1(names[key - 80]), value);
-        }
-        return pos == data.size();
-    }
-
-private:
-    bool read(int count, quint64 &value)
-    {
-        if (count > data.size() - pos) return false;
-        value = 0;
-        for (int i = 0; i < count; ++i)
-            value = (value << 8) | static_cast<quint8>(data[pos++]);
-        return true;
-    }
-    bool readUnsigned(quint32 &value)
-    {
-        quint64 tag = 0, number = 0;
-        if (!read(1, tag)) return false;
-        if (tag <= 0x7f) number = tag;
-        else if (tag == 0xcc) { if (!read(1, number)) return false; }
-        else if (tag == 0xcd) { if (!read(2, number)) return false; }
-        else if (tag == 0xce) { if (!read(4, number)) return false; }
-        else return false;
-        value = quint32(number);
-        return true;
-    }
-    bool readFloat(double &value)
-    {
-        quint64 tag = 0, bits = 0;
-        if (!read(1, tag)) return false;
-        if (tag == 0xca) {
-            if (!read(4, bits)) return false;
-            const quint32 word = quint32(bits);
-            float number;
-            std::memcpy(&number, &word, sizeof(number));
-            value = number;
-        } else if (tag == 0xcb) {
-            if (!read(8, bits)) return false;
-            std::memcpy(&value, &bits, sizeof(value));
-        } else return false;
-        return std::isfinite(value);
-    }
-    const QByteArray &data;
-    qsizetype pos = 0;
-};
-}
-
 ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
     : QObject(parent)
 {
@@ -148,8 +31,12 @@ ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
         while (m_udpSocket.hasPendingDatagrams()) {
             QByteArray datagram;
             datagram.resize(static_cast<int>(m_udpSocket.pendingDatagramSize()));
-            m_udpSocket.readDatagram(datagram.data(), datagram.size());
-            noteUdpRx();
+            QHostAddress sender;
+            m_udpSocket.readDatagram(datagram.data(), datagram.size(), &sender);
+            // A selected TCP endpoint owns the live session; never mix another
+            // vehicle's UDP stream or duplicate the TCP telemetry on UDP.
+            if (m_tcpSocket.state() == QAbstractSocket::ConnectedState
+                || sender != QHostAddress(m_remoteHostIp)) continue;
             processFrame(datagram);
         }
     });
@@ -159,14 +46,6 @@ ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
     connect(&m_tcpSocket, &QTcpSocket::disconnected, this, &ZenithProtocolClient::onTcpDisconnected);
     connect(&m_tcpSocket, &QTcpSocket::readyRead, this, &ZenithProtocolClient::onTcpReadyRead);
     connect(&m_tcpSocket, &QAbstractSocket::errorOccurred, this, &ZenithProtocolClient::onTcpError);
-
-    // Heartbeat receiving (Jetson connects to us)
-    connect(&m_heartbeatServer, &QTcpServer::newConnection, this, [this]() {
-        while (m_heartbeatServer.hasPendingConnections()) {
-            QTcpSocket *socket = m_heartbeatServer.nextPendingConnection();
-            handleHeartbeatConnection(socket);
-        }
-    });
 
     // Reconnect timer
     m_reconnectTimer.setSingleShot(true);
@@ -195,8 +74,11 @@ ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
             sendModeSelection(true);
             m_modeSelectionAckTimer.start(kModeSelectionAckTimeoutMs);
         } else {
-            appendLog("ModeSelection ACK timeout, proceeding without ACK");
-            m_awaitingModeSelectionAck = false;
+            appendLog("ModeSelection handshake timed out; reopening the link");
+            if (m_transportMode == TransportMode::Serial)
+                scheduleSerialReconnect("ModeSelection ACK timeout");
+            else
+                m_tcpSocket.disconnectFromHost();
             updateLinkStates();
         }
     });
@@ -229,21 +111,12 @@ bool ZenithProtocolClient::isConnected() const
 
 bool ZenithProtocolClient::telemetryFresh() const
 {
-    if (m_transportMode == TransportMode::Serial) {
-        // Serial mode: all data arrives on one channel, check any rx timestamp
-        const qint64 lastRx = std::max({m_lastUdpRxMs, m_lastTcpRxMs, m_lastHeartbeatRxMs});
-        return lastRx > 0 && (nowMs() - lastRx) <= kUdpFreshnessTimeoutMs;
-    }
-    return m_lastUdpRxMs > 0 && (nowMs() - m_lastUdpRxMs) <= kUdpFreshnessTimeoutMs;
+    return m_lastUdpRxMs > 0 && (nowMs() - m_lastUdpRxMs) <= kUdpFreshnessTimeoutMs
+        && m_codec.fcuHeartbeatFresh();
 }
 
 bool ZenithProtocolClient::heartbeatFresh() const
 {
-    if (m_transportMode == TransportMode::Serial) {
-        // Serial mode: all data arrives on one channel, check any rx timestamp
-        const qint64 lastRx = std::max({m_lastUdpRxMs, m_lastTcpRxMs, m_lastHeartbeatRxMs});
-        return lastRx > 0 && (nowMs() - lastRx) <= kHeartbeatFreshnessTimeoutMs;
-    }
     return m_lastHeartbeatRxMs > 0 && (nowMs() - m_lastHeartbeatRxMs) <= kHeartbeatFreshnessTimeoutMs;
 }
 
@@ -251,12 +124,12 @@ bool ZenithProtocolClient::canSendControlCommands() const
 {
     if (m_transportMode == TransportMode::Serial) {
         return m_active && m_serialPort.isOpen() && radioPairingReady()
-            && telemetryFresh();
+            && telemetryFresh() && heartbeatFresh() && !m_awaitingModeSelectionAck;
     }
     return m_active
         && m_tcpSocket.state() == QAbstractSocket::ConnectedState
         && telemetryFresh()
-        && heartbeatFresh();
+        && heartbeatFresh() && !m_awaitingModeSelectionAck;
 }
 
 // ---------------------------------------------------------------------------
@@ -266,7 +139,12 @@ void ZenithProtocolClient::setRemoteHostIp(const QString &ip) { m_remoteHostIp =
 void ZenithProtocolClient::setUdpPort(quint16 port) { m_udpPort = port; }
 void ZenithProtocolClient::setTcpPort(quint16 port) { m_tcpPort = port; }
 void ZenithProtocolClient::setHeartbeatPort(quint16 port) { m_heartbeatPort = port; }
-void ZenithProtocolClient::setRobotId(int robotId) { m_robotId = qMax(1, robotId); }
+void ZenithProtocolClient::setRobotId(int robotId)
+{
+    if (robotId <= 0 || robotId >= 255) return;
+    m_robotId = robotId;
+    m_codec.setTargetSystem(robotId);
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -320,15 +198,6 @@ void ZenithProtocolClient::startNetwork()
         }
     }
 
-    // Start heartbeat receiver
-    if (!m_heartbeatServer.isListening()) {
-        if (m_heartbeatServer.listen(QHostAddress::AnyIPv4, m_heartbeatPort)) {
-            appendLog("Heartbeat listener started");
-        } else {
-            appendLog(QString("Heartbeat listen failed: %1").arg(m_heartbeatServer.errorString()));
-        }
-    }
-
     // Connect persistent TCP
     m_pendingModeSelection = true;
     connectTcp();
@@ -364,16 +233,7 @@ void ZenithProtocolClient::stopNetwork()
     // Close TCP
     disconnectTcp();
 
-    // Close heartbeat peer
-    if (m_heartbeatPeer) {
-        m_heartbeatPeer->disconnectFromHost();
-        m_heartbeatPeer->deleteLater();
-        m_heartbeatPeer = nullptr;
-    }
-
-    // Close UDP & heartbeat server
     m_udpSocket.close();
-    m_heartbeatServer.close();
 }
 
 bool ZenithProtocolClient::testConnection()
@@ -399,6 +259,7 @@ void ZenithProtocolClient::connectTcp()
         return;
     }
     m_tcpIntentionalDisconnect = false;
+    m_pendingModeSelection = true;
     m_tcpRecvBuffer.clear();
     appendLog(QString("TCP connecting %1:%2").arg(m_remoteHostIp).arg(m_tcpPort));
     updateLinkStates();
@@ -416,11 +277,14 @@ void ZenithProtocolClient::disconnectTcp()
 
 void ZenithProtocolClient::onTcpConnected()
 {
+    resetFreshness();
     m_hasEverConnected = true;
     noteTcpRx();
     appendLog(QString("TCP connected %1:%2").arg(m_remoteHostIp).arg(m_tcpPort));
     updateLinkStates();
     emit tcpConnectedChanged(true);
+
+    onHeartbeatTimer(); // Establish the GCS source before sending an addressed extension.
 
     // Send pending ModeSelection on fresh connect
     if (m_pendingModeSelection) {
@@ -434,6 +298,7 @@ void ZenithProtocolClient::onTcpConnected()
 
 void ZenithProtocolClient::onTcpDisconnected()
 {
+    resetFreshness();
     appendLog("TCP connection lost");
     updateLinkStates();
     emit tcpConnectedChanged(false);
@@ -447,9 +312,8 @@ void ZenithProtocolClient::onTcpDisconnected()
 
 void ZenithProtocolClient::onTcpReadyRead()
 {
-    noteTcpRx();
     m_tcpRecvBuffer.append(m_tcpSocket.readAll());
-    processBuffer(m_tcpRecvBuffer);
+    if (processBuffer(m_tcpRecvBuffer, 1) > 0) noteTcpRx();
 }
 
 void ZenithProtocolClient::onTcpError(QAbstractSocket::SocketError error)
@@ -564,7 +428,11 @@ void ZenithProtocolClient::sendUdpMessage(int msgId, const QVariantMap &payload,
     }
 
     const QByteArray datagram = packFrame(msgId, robotId, payload);
-    m_udpSocket.writeDatagram(datagram, QHostAddress(m_remoteHostIp), m_udpPort);
+    for (qsizetype offset = 0; offset + 12 <= datagram.size();) {
+        const qsizetype size = 12 + quint8(datagram[offset + 1]);
+        m_udpSocket.writeDatagram(datagram.mid(offset, size), QHostAddress(m_remoteHostIp), m_udpPort);
+        offset += size;
+    }
     appendLog(QString("UDP send msg_id=%1 bytes=%2").arg(msgId).arg(datagram.size()));
 }
 
@@ -598,107 +466,9 @@ void ZenithProtocolClient::sendModeSelection(bool createMode)
 // ---------------------------------------------------------------------------
 // Frame codec
 // ---------------------------------------------------------------------------
-QByteArray ZenithProtocolClient::packFrame(int msgId, int robotId, const QVariantMap &payload) const
+QByteArray ZenithProtocolClient::packFrame(int msgId, int robotId, const QVariantMap &payload)
 {
-    const QByteArray jsonPayload = QJsonDocument(QJsonObject::fromVariantMap(payload)).toJson(QJsonDocument::Compact);
-    QByteArray frame;
-    frame.reserve(jsonPayload.size() + kFrameOverhead);
-    frame.append(kMagic0);
-    frame.append(kMagic1);
-
-    quint32 payloadSize = static_cast<quint32>(jsonPayload.size());
-    frame.append(static_cast<char>(payloadSize & 0xFF));
-    frame.append(static_cast<char>((payloadSize >> 8) & 0xFF));
-    frame.append(static_cast<char>((payloadSize >> 16) & 0xFF));
-    frame.append(static_cast<char>((payloadSize >> 24) & 0xFF));
-    frame.append(static_cast<char>(msgId & 0xFF));
-    frame.append(static_cast<char>(robotId & 0xFF));
-    frame.append(jsonPayload);
-
-    const quint16 crc = crc16Arc(frame);
-    frame.append(static_cast<char>(crc & 0xFF));
-    frame.append(static_cast<char>((crc >> 8) & 0xFF));
-    return frame;
-}
-
-ZenithProtocol::FrameDecodeResult ZenithProtocol::decodeFrame(const QByteArray &buffer)
-{
-    FrameDecodeResult result;
-    if (buffer.size() < kFrameOverhead) {
-        return result;
-    }
-
-    int offset = 0;
-    while (offset + 1 < buffer.size() && !(buffer[offset] == kMagic0 && buffer[offset + 1] == kMagic1)) {
-        ++offset;
-    }
-    if (offset > 0 || offset + kFrameOverhead > buffer.size()) {
-        result.totalBytes = offset;
-        return result;
-    }
-
-    const quint32 payloadSize = static_cast<quint8>(buffer[2])
-        | (static_cast<quint32>(static_cast<quint8>(buffer[3])) << 8)
-        | (static_cast<quint32>(static_cast<quint8>(buffer[4])) << 16)
-        | (static_cast<quint32>(static_cast<quint8>(buffer[5])) << 24);
-
-    // Sanity check. 上界由栅格帧决定，不是 8KB：机载 gridMapCb() 的窗口是
-    // 20m/0.15m = 133×133 = 17689 格，RLE 最坏情况每格一对 (value,run) = 35378 字节，
-    // 且机载侧不做任何截断。原来卡在 8192 会在障碍物一多时把整帧栅格丢掉，
-    // 而丢帧后只跳 2 字节重找 magic，RLE 二进制里撞上 0x61 0x6D 还会假同步、
-    // 连累后面几帧遥测 CRC 失败。
-    if (payloadSize > kMaxPayloadSize) {
-        result.totalBytes = 2; // skip past false magic bytes
-        return result;
-    }
-
-    const int totalSize = static_cast<int>(payloadSize) + kFrameOverhead;
-    if (buffer.size() < totalSize) {
-        return result;
-    }
-
-    const QByteArray frame = buffer.left(totalSize);
-    const quint16 expectedCrc = static_cast<quint8>(frame[totalSize - 2])
-        | (static_cast<quint16>(static_cast<quint8>(frame[totalSize - 1])) << 8);
-    const quint16 actualCrc = frameCrc16(frame.left(totalSize - 2));
-    result.totalBytes = totalSize;
-    if (expectedCrc != actualCrc) {
-        return result;
-    }
-
-    const QByteArray payloadBytes = frame.mid(8, static_cast<int>(payloadSize));
-
-    result.msgId = static_cast<quint8>(frame[6]);
-    result.robotId = static_cast<quint8>(frame[7]);
-
-    // Auto-detect: MsgPack (首字节 0x80-0x8F/0xDE/0xDF) vs JSON (首字节 '{')
-    if (result.msgId == ZenithProtocol::VOXELMAP) {
-        if (!VoxelPayloadReader(payloadBytes).decode(result.payload)) return result;
-    } else if (ZenithMsgPack::isMsgPack(payloadBytes)) {
-        if (!ZenithMsgPack::decodeMsgPack(payloadBytes, result.payload)) {
-            return result;
-        }
-    } else {
-        const QJsonDocument document = QJsonDocument::fromJson(payloadBytes);
-        if (!document.isObject()) {
-            return result;
-        }
-        result.payload = document.object().toVariantMap();
-    }
-
-    result.valid = true;
-    return result;
-}
-
-quint16 ZenithProtocolClient::crc16Arc(const QByteArray &data) const
-{
-    return frameCrc16(data);
-}
-
-ZenithProtocolClient::DecodedFrame ZenithProtocolClient::tryDecodeFrame(const QByteArray &buffer) const
-{
-    const auto frame = ZenithProtocol::decodeFrame(buffer);
-    return {frame.msgId, frame.robotId, frame.payload, frame.totalBytes, frame.valid};
+    return m_codec.encode(msgId, robotId, payload);
 }
 
 // ---------------------------------------------------------------------------
@@ -812,8 +582,8 @@ void ZenithProtocolClient::updateLinkStates()
 
     if (!m_active) {
         m_heartbeatState = QStringLiteral("IDLE");
-    } else if (!m_heartbeatServer.isListening()) {
-        m_heartbeatState = QStringLiteral("ERROR");
+    } else if (m_tcpSocket.state() != QAbstractSocket::ConnectedState) {
+        m_heartbeatState = QStringLiteral("WAITING");
     } else if (heartbeatFresh()) {
         m_heartbeatState = QStringLiteral("CONNECTED");
     } else if (m_lastHeartbeatRxMs > 0) {
@@ -870,80 +640,31 @@ void ZenithProtocolClient::updateLinkStates()
 // ---------------------------------------------------------------------------
 // Frame processing
 // ---------------------------------------------------------------------------
-int ZenithProtocol::consumeFrames(QByteArray &buffer,
-                                 const std::function<void(const FrameDecodeResult &)> &onFrame)
+int ZenithProtocolClient::processBuffer(QByteArray &buffer, int channel)
 {
-    int validFrames = 0;
-    // A readAll() burst may contain many valid map parts. Drain complete
-    // frames before bounding the unconsumed remainder, never flush that burst.
-    while (!buffer.isEmpty()) {
-        const FrameDecodeResult decoded = decodeFrame(buffer);
-        if (decoded.totalBytes > 0 && !decoded.valid) {
-            buffer.remove(0, decoded.totalBytes);
-            continue;
-        }
-        if (!decoded.valid) {
-            break;
-        }
-
-        ++validFrames;
-        onFrame(decoded);
-        buffer.remove(0, decoded.totalBytes);
+    const auto messages = m_codec.append(buffer, channel);
+    buffer.clear();
+    for (const auto &message : messages) {
+        if (message.heartbeat) noteHeartbeatRx();
+        if (message.telemetry) noteUdpRx();
+        if (message.kind == ZenithProtocol::PROTOCOL_ACK
+            && message.payload.value("request_kind").toInt() == ZenithProtocol::MODESELECTION
+            && (message.payload.value("status").toString() == "RECEIVED"
+                || message.payload.value("status").toString() == "DUPLICATE")) noteModeSelectionAck();
+        emit decodedMessage(message.kind, message.systemId, message.payload);
     }
-    if (buffer.size() > kMaxBufferSize) {
-        buffer.clear();
-    }
-    return validFrames;
-}
-
-int ZenithProtocolClient::processBuffer(QByteArray &buffer)
-{
-    return ZenithProtocol::consumeFrames(buffer, [this](const ZenithProtocol::FrameDecodeResult &frame) {
-        if (frame.msgId == ZenithProtocol::HEARTBEAT) noteHeartbeatRx();
-        emit decodedMessage(frame.msgId, frame.robotId, frame.payload);
-    });
+    return messages.size();
 }
 
 void ZenithProtocolClient::processFrame(const QByteArray &frame)
 {
     QByteArray buffer = frame;
-    processBuffer(buffer);
-}
-
-void ZenithProtocolClient::handleHeartbeatConnection(QTcpSocket *socket)
-{
-    if (!socket) {
-        return;
-    }
-
-    if (m_heartbeatPeer && m_heartbeatPeer != socket) {
-        m_heartbeatPeer->disconnectFromHost();
-        m_heartbeatPeer->deleteLater();
-    }
-    m_heartbeatPeer = socket;
-    m_heartbeatBuffer.clear();
-    appendLog("Heartbeat connection accepted");
-    updateLinkStates();
-
-    connect(socket, &QTcpSocket::readyRead, this, [this, socket]() {
-        if (socket != m_heartbeatPeer) {
-            return;
-        }
-        noteHeartbeatRx();
-        m_heartbeatBuffer.append(socket->readAll());
-        processBuffer(m_heartbeatBuffer);
-    });
-    connect(socket, &QTcpSocket::disconnected, this, [this, socket]() {
-        if (socket == m_heartbeatPeer) {
-            m_heartbeatPeer = nullptr;
-            updateLinkStates();
-        }
-        socket->deleteLater();
-    });
+    processBuffer(buffer, 0);
 }
 
 void ZenithProtocolClient::resetFreshness()
 {
+    m_codec.resetReceive();
     m_lastUdpRxMs = 0;
     m_lastHeartbeatRxMs = 0;
     m_lastTcpRxMs = 0;
@@ -1371,6 +1092,7 @@ void ZenithProtocolClient::completeRadioPairing()
     appendLog(QStringLiteral("LR24 pairing verified: address=%1 model=%2")
                   .arg(m_radioActualAddress).arg(m_radioProductModel));
 
+    onHeartbeatTimer();
     m_pendingModeSelection = false;
     m_awaitingModeSelectionAck = true;
     m_modeSelectionRetries = 0;
@@ -1691,11 +1413,9 @@ void ZenithProtocolClient::onSerialReadyRead()
     }
 
     // Only CRC-valid decoded frames make a newly opened/reopened link ready.
-    if (processBuffer(m_serialRecvBuffer) > 0) {
+    if (processBuffer(m_serialRecvBuffer, 3) > 0) {
         const qint64 now = nowMs();
         m_lastTcpRxMs = now;
-        m_lastUdpRxMs = now;
-        m_lastHeartbeatRxMs = now;
         m_lastSerialValidFrameMs = now;
         m_lastSerialDisplayFrameMs = now;
         m_serialHadValidFrame = true;

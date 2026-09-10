@@ -1,3 +1,5 @@
+# HISTORICAL LEGACY PROTOCOL: archived am/JSON framing, not MAVLink2.
+# Not a validation tool for the current bridge; use ZenithMavlinkProbe and CTest.
 """
 Tests for persistent TCP connection and heartbeat behavior.
 

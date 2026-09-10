@@ -34,12 +34,9 @@ void ParamStore::applyParamSettings(const QVariantMap &payload)
     if (params.isEmpty()) return;
 
     beginResetModel();
-    // Remove existing params of this module
-    for (int i = m_params.size() - 1; i >= 0; --i) {
-        if (m_params[i].module == module)
-            m_params.removeAt(i);
-    }
-    // Add new params
+    // Responses can span multiple bounded MAVLink extension transactions.
+    // Merge by module/name, retaining edits made locally while a query was in
+    // flight. An absent entry in one batch does not mean the parameter vanished.
     for (const QVariant &v : params) {
         const QVariantMap pm = v.toMap();
         ParamEntry entry;
@@ -47,9 +44,17 @@ void ParamStore::applyParamSettings(const QVariantMap &payload)
         entry.value = pm.value("param_value").toString();
         entry.type = pm.value("type").toInt();
         entry.module = module;
-        m_params.append(entry);
+        if (entry.name.isEmpty()) continue;
+        int row = -1;
+        for (int i = 0; i < m_params.size(); ++i) {
+            if (m_params[i].module == module && m_params[i].name == entry.name) {
+                row = i;
+                break;
+            }
+        }
+        if (row < 0) m_params.append(entry);
+        else if (!m_dirty.contains(row)) m_params[row] = entry;
     }
-    m_dirty.clear();
     endResetModel();
     emit paramsChanged();
 }

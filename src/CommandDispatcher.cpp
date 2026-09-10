@@ -3,6 +3,7 @@
 #include "TelemetryStore.h"
 #include "ZenithProtocolClient.h"
 #include "ZenithProtocol.h"
+#include "ManualMoveCommand.h"
 
 #include <QMap>
 #include <QDateTime>
@@ -72,33 +73,11 @@ void CommandDispatcher::sendManualMove(const QString &mode, double x, double y, 
         return;
     }
 
-    static const QMap<QString, int> moveModes = {
-        {"XYZ_POS", 0},
-        {"XY_VEL_Z_POS", 1},
-        {"XYZ_VEL", 2},
-        {"XYZ_POS_BODY", 3},
-        {"XYZ_VEL_BODY", 4},
-        {"XY_VEL_Z_POS_BODY", 5},
-        {"TRAJECTORY", 6},
-        {"XYZ_ATT", 7},
-        {"LAT_LON_ALT", 8}
-    };
-
-    QVariantMap payload;
-    payload.insert("Agent_CMD", 4);
-    payload.insert("Control_Level", 0);
-    payload.insert("Move_mode", moveModes.value(mode, 0));
-    payload.insert("position_ref", QVariantList{x, y, z});
-    payload.insert("velocity_ref", QVariantList{0.0, 0.0, 0.0});
-    payload.insert("acceleration_ref", QVariantList{0.0, 0.0, 0.0});
-    payload.insert("yaw_ref", yawDeg * M_PI / 180.0);
-    payload.insert("Yaw_Rate_Mode", false);
-    payload.insert("yaw_rate_ref", 0.0);
-    payload.insert("att_ref", QVariantList{0.0, 0.0, 0.0, 0.0});
-    payload.insert("latitude", 0.0);
-    payload.insert("longitude", 0.0);
-    payload.insert("altitude", z);
-    payload.insert("Command_ID", static_cast<int>(m_commandId++));
+    const QVariantMap payload = ManualMoveCommand::build(mode, x, y, z, yawDeg, m_commandId++);
+    if (payload.isEmpty()) {
+        m_telemetryStore->setCommandFeedback("Manual Move", "Rejected: invalid mode or coordinates");
+        return;
+    }
 
     double desiredPosX = m_telemetryStore->positionX();
     double desiredPosY = m_telemetryStore->positionY();
@@ -182,8 +161,8 @@ void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
         fields.append({QStringLiteral("task_path"), 5, taskPath});
     }
 
-    // JsonConverter in the aircraft bridge uses this indexed flat shape for
-    // CustomDataSegment_1 (message 113).
+    // Local model shape; ZenithMavlinkCodec converts it to the bridge's
+    // canonical {datas:[{name,type,value}]} JSON schema before transmission.
     QVariantMap payload;
     payload.insert(QStringLiteral("datas_num"), fields.size());
     for (int i = 0; i < fields.size(); ++i) {
@@ -286,7 +265,7 @@ quint32 CommandDispatcher::sendWaypoint(double x, double y, double z, double yaw
     }
 
     const quint32 localId = m_commandId++;
-    const quint32 wireId = isContinuation ? (localId | 0x80000000u) : localId;
+
 
     QVariantMap payload;
     payload.insert("Agent_CMD", 4);   // Move
@@ -302,8 +281,8 @@ quint32 CommandDispatcher::sendWaypoint(double x, double y, double z, double yaw
     payload.insert("latitude", 0.0);
     payload.insert("longitude", 0.0);
     payload.insert("altitude", z);
-    // qint64 保留无符号 32 位的高位 bit31（JSON 数字会被 .so 转回 uint32）
-    payload.insert("Command_ID", static_cast<qint64>(wireId));
+    payload.insert("Command_ID", QVariant::fromValue(localId));
+    payload.insert("waypoint_mission", isContinuation);
 
     sendUavCommand(payload, QString("Waypoint #%1 %2").arg(localId).arg(isContinuation ? "(cont)" : "(last)"));
     return localId;

@@ -1,20 +1,24 @@
 {
-  "protocol_name": "Zenith",
+  "protocol_name": "MAVLink 2",
   "namespace_prefix": "/zenith",
   "ground_station_ip": "127.0.0.1",
   "multicast_ip": "224.0.0.88",
   "udp_port": 8889,
   "tcp_port": 55555,
-  "tcp_heartbeat_port": 55556,
+  "tcp_heartbeat_port": null,
   "service_port": 20168,
   "primary_messages": [
-    "UAVSTATE",
-    "TEXTINFO",
     "HEARTBEAT",
-    "UAVCONTROLSTATE",
-    "UAVCOMMAND",
-    "UAVSETUP",
-    "PARAMSETTINGS",
-    "CUSTOMDATASEGMENT_1"
-  ]
+    "SYS_STATUS",
+    "ATTITUDE",
+    "LOCAL_POSITION_NED",
+    "GLOBAL_POSITION_INT",
+    "GPS_RAW_INT",
+    "BATTERY_STATUS",
+    "STATUSTEXT",
+    "V2_EXTENSION"
+  ],
+  "extension_message_id": 248,
+  "extension_message_type": 32768,
+  "companion_component_id": 191
 }

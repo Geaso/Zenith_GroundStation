@@ -6,6 +6,7 @@
 #include <QtEndian>
 #include <cmath>
 #include <limits>
+#include <cstring>
 
 namespace {
 bool mapUnsigned(const QVariantMap &payload, const char *key, quint32 limit, quint32 &out,
@@ -192,8 +193,24 @@ void TelemetryStore::setVehicleName(const QString &name)
     emit telemetryChanged();
 }
 
-void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
+void TelemetryStore::applyUavState(const QVariantMap &update, int senderId)
 {
+    // Standard MAVLink messages carry independent subsets. Keep missing fields,
+    // but clear the aggregate on vehicle selection or transport loss.
+    if (update.value("_reset_fcu", false).toBool()) invalidateVehicleData();
+    const bool partial = update.value("_partial", false).toBool();
+    const bool telemetrySample = update.value("_telemetry_sample", !partial).toBool();
+    if (!partial) m_telemetryFields.clear();
+    for (auto it = update.cbegin(); it != update.cend(); ++it)
+        if (!it.key().startsWith('_')) m_telemetryFields.insert(it.key(), it.value());
+    const QVariantMap &payload = m_telemetryFields;
+    if (partial && update.contains("battery_state") && update.value("battery_state").toDouble() > 0)
+        m_readyMask |= 2;
+    if (partial && update.contains("connected")) {
+        if (update.value("connected").toBool()) m_readyMask |= 1;
+        else m_readyMask &= ~1;
+    }
+
     auto readVector = [&payload](const QStringList &keys) {
         for (const QString &key : keys) {
             const QVariantList values = payload.value(key).toList();
@@ -205,12 +222,12 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     };
 
     m_currentTime = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
-    m_connected = payload.value("connected", true).toBool();
+    m_connected = payload.value("connected", !partial).toBool();
     // 收到真正的飞行遥测才计数；心跳帧不走这里，所以不会把"链路通"误判成"数据可用"。
-    if (m_uavStateFrames < StableFrames) {
+    if (telemetrySample && m_uavStateFrames < StableFrames) {
         ++m_uavStateFrames;
     }
-    if (m_firstUavStateMs == 0) {
+    if (telemetrySample && m_firstUavStateMs == 0) {
         m_firstUavStateMs = QDateTime::currentMSecsSinceEpoch();
     }
     bool wasArmed = m_armed;
@@ -278,7 +295,7 @@ void TelemetryStore::applyUavState(const QVariantMap &payload, int senderId)
     }
 
     m_flightStatus = m_connected ? "Telemetry Online" : "Vehicle Offline";
-    m_heartbeatLink = "Heartbeat OK";
+    if (!partial) m_heartbeatLink = "Heartbeat OK";
     m_videoLink = payload.value("video_status", m_videoStatus).toString();
     Q_UNUSED(senderId)
 
@@ -480,7 +497,7 @@ void TelemetryStore::applyHeartbeat(const QVariantMap &payload)
         m_runningNodes = nodesStr.split(',', Qt::SkipEmptyParts);
     }
 
-    m_connected = true;
+    // A heartbeat proves link liveness; FCU connectivity is tracked separately.
     emit telemetryChanged();
 }
 
@@ -516,6 +533,10 @@ void TelemetryStore::setTransportHealth(bool telemetryFresh, bool heartbeatFresh
 
 void TelemetryStore::invalidateVehicleData()
 {
+    m_telemetryFields.clear();
+    m_preflightValid = false;
+    m_preflightArmOk = false;
+    m_preflightPrearmBit = false;
     resetMapReception();
     // 链路一断，上一次收到的遥测就不再代表飞机现在的状态，必须作废。
     //
@@ -650,7 +671,7 @@ QVariantList TelemetryStore::preflightChecks() const
 
 void TelemetryStore::applyCustomDataSegment(const QVariantMap &payload)
 {
-    // 线格式是扁平化带索引的：datas_num / name[i] / type[i] / value[i]
+    // ZenithMavlinkCodec normalizes the wire's datas array to this model shape.
     const int count = payload.value(QStringLiteral("datas_num")).toInt();
     if (count <= 0)
         return;
@@ -924,19 +945,24 @@ void TelemetryStore::applyGridMap(const QVariantMap &payload, int senderId, qint
 
 void TelemetryStore::applyPlannedPath(const QVariantMap &payload)
 {
-    int npts = payload.value("pp_num_points").toInt();
-    QByteArray raw = payload.value("pp_data").toByteArray();
+    quint32 npts = 0;
+    if (!mapUnsigned(payload, "pp_num_points", 16384, npts, true)
+        || payload.value("pp_data").typeId() != QMetaType::QByteArray) return;
+    const QByteArray raw = payload.value("pp_data").toByteArray();
+    if (raw.size() != qsizetype(npts) * 12) return;
 
-    m_plannedPath.clear();
-    if (npts <= 0 || raw.size() < npts * 12) {
-        emit plannedPathChanged();
-        return;
+    QVector<TrailPt> points;
+    points.reserve(int(npts));
+    for (quint32 i = 0; i < npts; ++i) {
+        float xyz[3];
+        for (int axis = 0; axis < 3; ++axis) {
+            const quint32 bits = qFromLittleEndian<quint32>(raw.constData() + i * 12 + axis * 4);
+            std::memcpy(&xyz[axis], &bits, sizeof(float));
+            if (!std::isfinite(xyz[axis])) return;
+        }
+        points.append({xyz[0], xyz[1], xyz[2]});
     }
-
-    m_plannedPath.reserve(npts);
-    const float *fp = reinterpret_cast<const float*>(raw.constData());
-    for (int i = 0; i < npts; ++i) {
-        m_plannedPath.append({fp[i*3], fp[i*3+1], fp[i*3+2]});
-    }
+    // A well-formed empty path explicitly clears the finished planner display.
+    m_plannedPath = std::move(points);
     emit plannedPathChanged();
 }
