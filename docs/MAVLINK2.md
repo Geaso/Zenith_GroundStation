@@ -8,7 +8,7 @@
 - FCU 原生 `HEARTBEAT`、`LOCAL_POSITION_NED`、`ATTITUDE`、`SYS_STATUS`、`BATTERY_STATUS`、GPS、高度、下视距离和 `STATUSTEXT` 等标准消息进入 `ZenithMavlinkCodec`。位置和速度从 NED 转 ENU，姿态从 FRD/NED 转 FLU/ENU。
 - 机载 `UAVSTATE` 业务扩展中的 `fcu_system_id` 关联实际 FCU system ID 与逻辑飞机 ID。该关联按接收字节流隔离，断线或切换目标时清除。机载附加字段不能覆盖 FCU 的解锁、模式、位置和电池等字段。
 - 仅伴随计算机心跳不能使飞控显示在线。控制链路要求新鲜 FCU 遥测、心跳以及已完成的握手。
-- Zenith 业务使用 common.xml 的 `V2_EXTENSION`（message ID 248），扩展内部携带业务 kind、事务 ID、JSON 分片和完整负载校验。使用共享 `include/zenith_protocol/mavlink_wire.hpp` 与 `third_party/mavlink/`，没有旧 am/MsgPack 运行分支。
+- Zenith 业务使用 common.xml 的 `V2_EXTENSION`（message ID 248），扩展内部携带业务 kind、事务 ID 和 JSON 分片。CRC 校验作用于每个 MAVLink2 帧；扩展重组检查长度、偏移和分片边界，随后解析检查 JSON 格式。使用共享 `include/zenith_protocol/mavlink_wire.hpp` 与 `third_party/mavlink/`，没有旧 am/MsgPack 运行分支。
 
 | 业务 kind | JSON 形状及地面站适配 |
 | --- | --- |

@@ -903,7 +903,7 @@ ApplicationWindow {
                         Text { text: "当前配对: " + appState.vehicleName; color: "#E6EDF3"; font.pixelSize: 13; font.bold: true }
                         Row {
                             spacing: 20
-                            Text { text: "UDP: " + appState.udpLinkState; color: "#8B949E"; font.pixelSize: 12 }
+                            Text { text: "遥测: " + appState.udpLinkState; color: "#8B949E"; font.pixelSize: 12 }
                             Text { text: "TCP: " + appState.tcpLinkState; color: "#8B949E"; font.pixelSize: 12 }
                             Text { text: "HB: " + appState.heartbeatLinkState; color: "#8B949E"; font.pixelSize: 12 }
                         }

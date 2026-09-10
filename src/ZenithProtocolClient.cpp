@@ -567,7 +567,8 @@ void ZenithProtocolClient::updateLinkStates()
         return;
     }
 
-    // Network mode: original 3-channel state logic
+    // The legacy udpState property represents telemetry freshness across the
+    // selected network stream; display it as telemetry, since TCP carries it too.
     if (!m_active) {
         m_udpState = QStringLiteral("IDLE");
     } else if (m_udpSocket.state() != QAbstractSocket::BoundState) {
@@ -631,7 +632,7 @@ void ZenithProtocolClient::updateLinkStates()
         return QString::number((now - ts) / 1000.0, 'f', 1) + QStringLiteral("s");
     };
 
-    m_connectionSummary = QString("%1 | TCP=%2 | UDP=%3(last=%4) | HB=%5(last=%6)")
+    m_connectionSummary = QString("%1 | TCP=%2 | TELEMETRY=%3(last=%4) | HB=%5(last=%6)")
         .arg(overallState, m_tcpState, m_udpState, ageText(m_lastUdpRxMs), m_heartbeatState, ageText(m_lastHeartbeatRxMs));
     emit transportStateChanged(m_connectionSummary);
     emit linkStatesChanged();
