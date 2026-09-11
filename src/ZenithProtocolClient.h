@@ -98,6 +98,10 @@ public:
     int serialReconnectCount() const;
     int radioTargetAddress() const;
     void setRadioTargetAddress(int address);
+    // Diagnostic opt-in: read and retain an already paired LR24 address,
+    // without SET commands. Configure before start(); default product flow is unchanged.
+    void setRadioPairingReadOnly(bool enabled);
+    bool radioPairingReadOnly() const;
     int radioActualAddress() const;
     QString radioActualAddressText() const;
     QString radioPairingState() const;
@@ -273,6 +277,7 @@ private:
     Lr24RadioProtocol::StreamParser m_radioConfigParser;
     RadioPairingStage m_radioPairingStage{RadioPairingStage::Idle};
     int m_radioTargetAddress{0};
+    bool m_radioPairingReadOnly{false};
     int m_radioActualAddress{-1};
     quint8 m_radioProductModel{0};
     quint8 m_radioSystemId{0};

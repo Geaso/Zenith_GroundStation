@@ -5,6 +5,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QHash>
+#include <QRandomGenerator>
 #include <QtMath>
 #include <array>
 #include <cmath>
@@ -99,7 +100,9 @@ public:
     std::array<zenith::mavlink::Parser, 4> parsers;
     std::array<zenith::mavlink::Reassembler, 4> assemblers;
     QElapsedTimer timer;
-    quint32 transaction = 0;
+    // Bridge duplicate detection survives reconnects. A new client process must
+    // not restart at transaction 1 and collide with the previous session.
+    quint32 transaction = QRandomGenerator::global()->generate();
     int target = 1;
     std::array<int, 4> mappedFcus{};
     int channel = 0;
@@ -325,7 +328,8 @@ QByteArray ZenithMavlinkCodec::encode(int kind, int targetSystem, const QVariant
     const QByteArray json = QJsonDocument(QJsonObject::fromVariantMap(jsonPayload)).toJson(QJsonDocument::Compact);
     zenith::mavlink::Bytes body(json.begin(), json.end());
     QByteArray result;
-    for (const auto &packet : d->encoder.encodeExtension(quint8(kind), ++d->transaction, body, 1, quint8(targetSystem), zenith::mavlink::kComponent))
+    if (++d->transaction == 0) ++d->transaction;
+    for (const auto &packet : d->encoder.encodeExtension(quint8(kind), d->transaction, body, 1, quint8(targetSystem), zenith::mavlink::kComponent))
         result += bytes(packet);
     return result;
 }

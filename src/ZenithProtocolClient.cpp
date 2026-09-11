@@ -714,6 +714,13 @@ void ZenithProtocolClient::setRadioTargetAddress(int address)
     emit radioPairingChanged();
 }
 
+void ZenithProtocolClient::setRadioPairingReadOnly(bool enabled)
+{
+    if (!m_active) m_radioPairingReadOnly = enabled;
+}
+
+bool ZenithProtocolClient::radioPairingReadOnly() const { return m_radioPairingReadOnly; }
+
 QString ZenithProtocolClient::radioActualAddressText() const
 {
     if (m_radioActualAddress < 0) {
@@ -807,7 +814,7 @@ void ZenithProtocolClient::beginRadioPairing()
     m_serialHasValidFrameSinceOpen = false;
     m_serialOpenedAtMs = 0;
 
-    if (!Lr24RadioProtocol::isFleetAddressAssignable(m_radioTargetAddress)) {
+    if (!m_radioPairingReadOnly && !Lr24RadioProtocol::isFleetAddressAssignable(m_radioTargetAddress)) {
         failRadioPairing(QStringLiteral("PAIRING_NO_TARGET"),
                          QStringLiteral("未选择有效的数传配对项（地址需为 1–254）"));
         return;
@@ -823,7 +830,8 @@ void ZenithProtocolClient::beginRadioPairing()
     m_radioPairingErrorCode.clear();
     m_radioPairingErrorText.clear();
     setRadioPairingStage(RadioPairingStage::Settling);
-    appendLog(QStringLiteral("LR24 pairing start: target=%1").arg(m_radioTargetAddress));
+    appendLog(m_radioPairingReadOnly ? QStringLiteral("LR24 read-only address verification started (no SET)")
+                                    : QStringLiteral("LR24 pairing start: target=%1").arg(m_radioTargetAddress));
     m_radioPairingTimer.start(kRadioOpenSettleMs);
     emit radioPairingChanged();
 }
@@ -871,6 +879,10 @@ void ZenithProtocolClient::sendRadioGetAddress()
 
 void ZenithProtocolClient::sendRadioSetAddress()
 {
+    if (m_radioPairingReadOnly) {
+        failRadioPairing(QStringLiteral("PAIRING_READ_ONLY"), QStringLiteral("Read-only LR24 session cannot write parameters"));
+        return;
+    }
     QString error;
     const QByteArray bytes = Lr24RadioProtocol::makeSetAddressCommand(
         m_radioProductModel, m_radioSystemId, m_radioConfigSequence++,
@@ -1015,6 +1027,19 @@ void ZenithProtocolClient::handleRadioConfigFrame(const Lr24RadioProtocol::Frame
         m_radioActualAddress = address;
         m_radioCurrentParameters = parameters;
         emit radioPairingChanged();
+
+        if (m_radioPairingReadOnly) {
+            if (!Lr24RadioProtocol::isFleetAddressAssignable(address)) {
+                failRadioPairing(QStringLiteral("PAIRING_NOT_ASSIGNED"),
+                                 QStringLiteral("Read-only probe requires an already paired LR24 address"));
+                return;
+            }
+            // This is the observed physical radio address, independent of the
+            // logical MAVLink target. Retain it; never issue a SET or persist it.
+            m_radioTargetAddress = address;
+            completeRadioPairing();
+            return;
+        }
 
         m_radioPairingAttempts = 0;
         setRadioPairingStage(RadioPairingStage::WaitingSetAck);

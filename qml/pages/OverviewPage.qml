@@ -1184,13 +1184,17 @@ Item {
                 function sendGoal(enuX, enuY, enuZ) {
                     if (!plannerRunning)
                         return
+                    if (superRunning) {
+                        appState.sendPlannerGoal(enuX, enuY, enuZ, 0.0)
+                        return
+                    }
                     var goalCmd = "rostopic pub -1 /move_base_simple/goal geometry_msgs/PoseStamped "
                         + "'{header: {frame_id: \"world\"}, pose: {position: {x: "
                         + enuX.toFixed(2) + ", y: " + enuY.toFixed(2) + ", z: " + enuZ.toFixed(2)
                         + "}, orientation: {w: 1}}}'"
                     var triggerCmd = "rostopic pub -1 /traj_start_trigger geometry_msgs/PoseStamped "
                         + "'{header: {frame_id: \"world\"}, pose: {orientation: {w: 1}}}'"
-                    appState.sendRemoteScript(egoRunning ? goalCmd + " && " + triggerCmd : goalCmd)
+                    appState.sendRemoteScript(goalCmd + " && " + triggerCmd)
                 }
 
                 function updateCam() {

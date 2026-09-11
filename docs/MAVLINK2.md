@@ -18,6 +18,7 @@
 | 110 PARAMSETTINGS | `param_module/params:[{type,param_name,param_value}]`；同模块按参数名称合并多批响应，保留尚未上传的本地编辑 |
 | 113 CUSTOMDATASEGMENT_1 | 线上统一为 `datas:[{name,type,value}]`；编码器把旧 UI 索引模型转成数组，解码器转回模型供任务与预检状态使用，`value` 为字符串 |
 | 114 PROTOCOL_ACK | `request_kind/transaction_id/status`；`RECEIVED` 表示桥端接收处理请求，不能当作飞控已执行、任务已成功或飞行验证 |
+| 255 GOAL | `{position:[x,y,z],yaw,frame_id:"world"}`；SUPER 由 AppState/CommandDispatcher 的同一接口发送，机载直接发布目标，不经过 shell；EGO 保留独立的 goal + trigger 流程 |
 | 11 / 12 / 13 | `gm_data/pp_data/vm_data` 在 JSON 中为 base64，解码后为字节数组；规划路径为小端 float32 XYZ，体素仍按既有掩码/RLE 分片重组 |
 
 轨迹消息 `{pp_num_points:0,pp_data:""}` 清除已结束的路径；非法长度、超限点数和非有限坐标不会替换当前有效路径。二维地图与体素显示保持原有优先关系。
@@ -37,7 +38,7 @@ ctest --test-dir build-release --output-on-failure
 
 ## 手工生产连接探针
 
-`ZenithMavlinkProbe` 是单独的无界面 CMake 目标，不注册为外网 CTest。请在已建立的隔离 ROS master 和模拟 FCU 上运行，不能以生产 master 或真实运动控制链路代替隔离测试。
+`ZenithMavlinkProbe` 是单独的无界面 CMake 目标，不注册为外网 CTest。支持隔离测试桥和已配对串口的通信验证；涉及任务启动或规划目标时，使用已核对控制输出隔离的试验环境。
 
 下面命令中的 `TEST_BRIDGE_IP` 需替换为测试主机的 IP。测试桥使用 TCP 56555；本例模拟源为 FCU 1、逻辑飞机 214、未解锁 POSCTL、ENU 位置 `[1.25,-2.5,3.75]`、电池 15.2 V。
 
@@ -49,7 +50,25 @@ ctest --test-dir build-release --output-on-failure
   --timeout-ms 20000 2>&1 | Out-String
 ```
 
-探针仅发送生产握手、GCS 心跳及一次只读参数查询，默认查询模块 2；指定 `--param-name /absolute/ros/parameter` 则使用模块 5 SEARCH。它不发送解锁、运动、任务启动或参数写入。
+探针默认仅发送生产握手、GCS 心跳及一次只读参数查询，默认查询模块 2；指定 `--param-name /absolute/ros/parameter` 则使用模块 5 SEARCH，`--skip-params` 可跳过参数查询。它没有解锁、手动运动或参数写入选项。
+
+串口模式明确指定逻辑 MAVLink ID，独立于 LR24 物理地址：
+
+```powershell
+& .\build-release\ZenithMavlinkProbe.exe --serial COM5 --baud 921600 --uav-id 11 `
+  --fcu-id 1 --timeout-ms 20000
+```
+
+串口探针显式启用 `ZenithProtocolClient::setRadioPairingReadOnly(true)`：读取当前已配对地址后直接验证完成，禁止发送 SET，不将物理地址保存到应用配对配置。产品默认配对流程保持原样。输出包括实际无线地址、配对状态、串口收发字节和独立的逻辑飞机 ID。
+
+以下选项必须显式指定；每次运行最多一种操作，且探针仅在 FCU 遥测新鲜、链路就绪、未解锁时发送：
+
+- `--task-query`：使用生产 CommandDispatcher 发送任务 STATUS。
+- `--task-start NAME [--task-path /absolute/path]`：发送 START，yaw enable 固定为 false。
+- `--task-stop NAME --wait-task-state STOPPED`：发送 STOP，并等待机载任务管理器的 STOPPED 状态。
+- `--super-goal x,y,z`：使用与界面相同的生产接口发送 kind 255，world 坐标、yaw 为 0。范围为 x/y ±1000 m，z ±100 m。
+
+`--wait-task-state RUNNING` 等选项要求匹配任务生命周期；`--observe-ms 3000` 在操作发送后继续接收至少 3 秒。JSON 分别记录 `protocol_acks`、`task_events`、`task_request_id`、任务 ACK/状态/原因。规划目标的 `RECEIVED` 仅表示目标发布，任务协议 ACK 与机载任务生命周期也分别判读。每个新客户端使用随机非零事务序列起点，避免快速重启后与桥端的近期去重缓存碰撞。
 
 成功条件包括握手 ACK、参数查询 ACK 和响应、实际 FCU 关联、新鲜遥测、稳定遥测、未解锁状态，以及位置/速度/姿态/电池首值。选项还可要求任务/预检数据、完整体素图或规划路径。探针打印一行 JSON，包含各条件、实际遥测和 ACK；通过退出 0，超时退出 1，参数错误退出 2。它使用临时 UDP 接收端口，不占生产 8889。
 

@@ -128,7 +128,7 @@ void CommandDispatcher::runScript(const QString &name, const QString &command, c
     m_telemetryStore->setCommandFeedback(QString("StartScript: %1").arg(name), "Sent (awaiting CMD_ACK)");
 }
 
-void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
+QString CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
                                                 const QString &action,
                                                 bool yawEnable,
                                                 const QString &taskPath)
@@ -137,7 +137,7 @@ void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
     const QString commandName = QStringLiteral("ManagedTask %1 %2")
                                     .arg(normalizedAction, taskName);
     if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, commandName)) {
-        return;
+        return {};
     }
 
     const QString requestId = QStringLiteral("gcs-%1-%2")
@@ -176,6 +176,23 @@ void CommandDispatcher::sendManagedTaskRequest(const QString &taskName,
         m_telemetryStore->currentVehicleId());
     m_telemetryStore->setCommandFeedback(
         commandName, QStringLiteral("已发送，等待机载任务 ACK (%1)").arg(requestId));
+    return requestId;
+}
+
+bool CommandDispatcher::sendPlannerGoal(double x, double y, double z, double yawRad)
+{
+    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || !std::isfinite(yawRad)
+        || std::abs(x) > 1000 || std::abs(y) > 1000 || z < -100 || z > 100
+        || std::abs(yawRad) > 3.14159265358979323846) {
+        m_telemetryStore->setCommandFeedback("SUPER goal", "Rejected: invalid coordinates");
+        return false;
+    }
+    if (!ensureControlLinkReady(m_telemetryStore, m_protocolClient, "SUPER goal")) return false;
+    m_protocolClient->sendTcpMessage(ZenithProtocol::GOAL,
+        {{"position", QVariantList{x, y, z}}, {"yaw", yawRad}, {"frame_id", "world"}},
+        m_telemetryStore->currentVehicleId());
+    m_telemetryStore->setCommandFeedback("SUPER goal", "Sent (awaiting protocol ACK)");
+    return true;
 }
 
 void CommandDispatcher::armVehicle(bool arm)

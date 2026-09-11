@@ -226,6 +226,7 @@ public:
     Q_INVOKABLE void stopManagedTask(const QString &taskName);
     Q_INVOKABLE void queryManagedTask();
     Q_INVOKABLE void sendRemoteScript(const QString &cmd);
+    Q_INVOKABLE bool sendPlannerGoal(double x, double y, double z, double yawRad = 0.0);
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);
     Q_INVOKABLE void switchLocationSource(int sourceIndex);

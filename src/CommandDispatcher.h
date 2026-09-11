@@ -14,9 +14,10 @@ public:
     Q_INVOKABLE void issueQuickAction(const QString &name);
     Q_INVOKABLE void sendManualMove(const QString &mode, double x, double y, double z, double yawDeg);
     Q_INVOKABLE void runScript(const QString &name, const QString &command, const QString &target);
-    Q_INVOKABLE void sendManagedTaskRequest(const QString &taskName, const QString &action,
+    Q_INVOKABLE QString sendManagedTaskRequest(const QString &taskName, const QString &action,
                                             bool yawEnable = false,
                                             const QString &taskPath = QString());
+    Q_INVOKABLE bool sendPlannerGoal(double x, double y, double z, double yawRad = 0.0);
     Q_INVOKABLE void armVehicle(bool arm);
     Q_INVOKABLE void setPx4Mode(const QString &mode);
     Q_INVOKABLE void switchLocationSource(int sourceIndex);

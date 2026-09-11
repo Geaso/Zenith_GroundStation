@@ -109,8 +109,15 @@ bool commands()
     if (!check(transfer && transfer->source_system == 255 && transfer->target_system == 214
                && transfer->target_component == 191 && transfer->kind == 202,
                "fragmented command addresses the selected companion")) return false;
-    return check(QJsonDocument::fromJson(bytes(transfer->payload)).object().toVariantMap() == command,
-                 "fragmented command preserves payload and uint32 command ids");
+    if (!check(QJsonDocument::fromJson(bytes(transfer->payload)).object().toVariantMap() == command,
+                 "fragmented command preserves payload and uint32 command ids")) return false;
+    ZenithMavlinkCodec restarted;
+    std::optional<zenith::mavlink::Extension> nextSession;
+    for (unsigned char ch : restarted.encode(ZenithProtocol::MODESELECTION, 214, command))
+        if (auto m = parser.consume(ch)) if (auto e = reassembler.accept(*m, 101)) nextSession = e;
+    return check(nextSession && nextSession->transaction_id != 0 && transfer->transaction_id != 0
+        && nextSession->transaction_id != transfer->transaction_id,
+        "new codec sessions use distinct nonzero randomized transaction starting points");
 }
 
 bool telemetry()
@@ -371,8 +378,19 @@ bool tcpLoopback()
         if (auto e = assembler.accept(*m, 2); e && e->kind == 113) task = e;
     if (!check(task && QJsonDocument::fromJson(bytes(task->payload)).object().value("datas").toArray().size() == 7,
         "production task dispatcher reaches canonical bridge schema with seven task fields")) return false;
+    if (!check(!dispatcher.sendPlannerGoal(std::numeric_limits<double>::quiet_NaN(), 2, 3)
+        && !dispatcher.sendPlannerGoal(1001, 2, 3), "invalid planner goals are rejected before transmission")) return false;
+    if (!check(dispatcher.sendPlannerGoal(1.25, -2.5, 1.5, 0.0), "production dispatcher accepts a typed SUPER goal")) return false;
+    if (!check(waitFor([&] { return peer->bytesAvailable() > 0; }), "typed planner goal reaches TCP")) return false;
+    std::optional<zenith::mavlink::Extension> goal;
+    for (unsigned char ch : peer->readAll()) if (auto m = parser.consume(ch))
+        if (auto e = assembler.accept(*m, 3); e && e->kind == ZenithProtocol::GOAL) goal = e;
+    if (!check(goal && QJsonDocument::fromJson(bytes(goal->payload)).object() == QJsonObject{
+        {"position", QJsonArray{1.25, -2.5, 1.5}}, {"yaw", 0.0}, {"frame_id", "world"}},
+        "SUPER goal uses kind255 typed world coordinates without a shell command")) return false;
     peer->disconnectFromHost();
     if (!check(waitFor([&] { return !client.canSendControlCommands(); }), "disconnect immediately invalidates control readiness")) return false;
+    if (!check(!dispatcher.sendPlannerGoal(1, 2, 3), "disconnected client blocks typed planner goals")) return false;
     client.stop(); peer->deleteLater();
     return true;
 }

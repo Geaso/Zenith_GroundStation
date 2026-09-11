@@ -333,6 +333,13 @@ void AppState::sendRemoteScript(const QString &cmd)
     emit commandTriggered(QString("Remote Script: %1").arg(cmd));
 }
 
+bool AppState::sendPlannerGoal(double x, double y, double z, double yawRad)
+{
+    const bool sent = m_commandDispatcher->sendPlannerGoal(x, y, z, yawRad);
+    if (sent) emit commandTriggered(QStringLiteral("SUPER planner goal"));
+    return sent;
+}
+
 void AppState::startModule(const QString &moduleName)
 {
     static const QMap<QString, QString> moduleScripts = {

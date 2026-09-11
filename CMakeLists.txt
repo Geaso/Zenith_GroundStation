@@ -125,6 +125,7 @@ include(CTest)
 # Explicit manual integration target; never contacts a remote endpoint in CTest.
 qt_add_executable(ZenithMavlinkProbe
     tools/mavlink_probe.cpp
+    src/CommandDispatcher.cpp src/CommandDispatcher.h
     src/ZenithMavlinkCodec.cpp src/ZenithMavlinkCodec.h
     src/ZenithProtocolClient.cpp src/ZenithProtocolClient.h
     src/Lr24RadioProtocol.cpp src/Lr24RadioProtocol.h
