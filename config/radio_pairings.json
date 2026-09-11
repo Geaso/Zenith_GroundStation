@@ -16,5 +16,11 @@
         "radio_address": 215,
         "uav_id": 215,
         "note": "新刷 F.1 板"
+    },
+    {
+        "name": "yukong11",
+        "radio_address": 11,
+        "uav_id": 11,
+        "note": "2026-09-11 实机核验：数传地址 11，Zenith 逻辑编号 11，飞控 MAVLink system ID 1"
     }
 ]
