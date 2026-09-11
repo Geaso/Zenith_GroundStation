@@ -59,6 +59,14 @@ ZenithProtocolClient::ZenithProtocolClient(QObject *parent)
 
     connect(&m_serialPort, &QSerialPort::readyRead, this, &ZenithProtocolClient::onSerialReadyRead);
     connect(&m_serialPort, &QSerialPort::errorOccurred, this, &ZenithProtocolClient::onSerialError);
+    connect(&m_serialWriter, &PacedSerialWriter::bytesAccepted, this, [this](qint64 bytes) {
+        m_serialTxBytes += static_cast<quint64>(bytes);
+    });
+    connect(&m_serialWriter, &PacedSerialWriter::failed, this, [this](const QString &reason) {
+        appendLog(reason);
+        scheduleSerialReconnect(reason);
+        updateLinkStates();
+    });
 
     m_radioPairingTimer.setSingleShot(true);
     connect(&m_radioPairingTimer, &QTimer::timeout,
@@ -355,7 +363,7 @@ void ZenithProtocolClient::onHeartbeatTimer()
         payload.insert("count", static_cast<int>(m_heartbeatCount++));
         payload.insert("message", QString());
         const QByteArray frame = packFrame(ZenithProtocol::HEARTBEAT, m_robotId, payload);
-        writeSerial(frame);
+        enqueueSerial(frame);
         return;
     }
 
@@ -383,8 +391,8 @@ void ZenithProtocolClient::sendTcpMessage(int msgId, const QVariantMap &payload,
             return;
         }
         const QByteArray packet = packFrame(msgId, robotId, payload);
-        writeSerial(packet);
-        appendLog(QString("Serial send msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
+        if (enqueueSerial(packet))
+            appendLog(QString("Serial queued msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
         return;
     }
 
@@ -417,8 +425,8 @@ void ZenithProtocolClient::sendUdpMessage(int msgId, const QVariantMap &payload,
             return;
         }
         const QByteArray packet = packFrame(msgId, robotId, payload);
-        writeSerial(packet);
-        appendLog(QString("Serial send msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
+        if (enqueueSerial(packet))
+            appendLog(QString("Serial queued msg_id=%1 bytes=%2").arg(msgId).arg(packet.size()));
         return;
     }
 
@@ -789,6 +797,7 @@ void ZenithProtocolClient::setRadioPairingStage(RadioPairingStage stage)
 
 void ZenithProtocolClient::resetRadioPairing(bool clearActualAddress)
 {
+    m_serialWriter.stop();
     m_radioPairingTimer.stop();
     m_radioConfigParser.reset();
     m_radioCurrentParameters.clear();
@@ -807,6 +816,10 @@ void ZenithProtocolClient::resetRadioPairing(bool clearActualAddress)
 
 void ZenithProtocolClient::beginRadioPairing()
 {
+    m_serialWriter.stop();
+    // Reapply can retain the same open port. Discard pending normal output
+    // before local LR24 configuration takes exclusive ownership again.
+    if (m_serialPort.isOpen()) m_serialPort.clear(QSerialPort::Output);
     m_modeSelectionAckTimer.stop();
     m_awaitingModeSelectionAck = false;
     m_serialRecvBuffer.clear();
@@ -856,7 +869,7 @@ void ZenithProtocolClient::sendRadioConfigHeartbeat()
         failRadioPairing(QStringLiteral("PAIRING_HEARTBEAT_BUILD_FAILED"), error);
         return;
     }
-    if (writeSerial(bytes) != bytes.size()) {
+    if (writeSerialConfig(bytes) != bytes.size()) {
         failRadioPairing(QStringLiteral("PAIRING_WRITE_FAILED"),
                          QStringLiteral("数传配置心跳写入不完整"));
     }
@@ -871,7 +884,7 @@ void ZenithProtocolClient::sendRadioGetAddress()
         failRadioPairing(QStringLiteral("PAIRING_GET_BUILD_FAILED"), error);
         return;
     }
-    if (writeSerial(bytes) != bytes.size()) {
+    if (writeSerialConfig(bytes) != bytes.size()) {
         failRadioPairing(QStringLiteral("PAIRING_WRITE_FAILED"),
                          QStringLiteral("数传地址查询写入不完整"));
     }
@@ -891,7 +904,7 @@ void ZenithProtocolClient::sendRadioSetAddress()
         failRadioPairing(QStringLiteral("PAIRING_SET_BUILD_FAILED"), error);
         return;
     }
-    if (writeSerial(bytes) != bytes.size()) {
+    if (writeSerialConfig(bytes) != bytes.size()) {
         failRadioPairing(QStringLiteral("PAIRING_WRITE_FAILED"),
                          QStringLiteral("数传地址设置写入不完整"));
     }
@@ -1114,6 +1127,7 @@ void ZenithProtocolClient::completeRadioPairing()
     m_serialOpenedAtMs = nowMs();
     m_serialHasValidFrameSinceOpen = false;
     m_serialDataInterrupted = false;
+    m_serialWriter.start(m_serialPort.baudRate(QSerialPort::Output));
     setRadioPairingStage(RadioPairingStage::Ready);
     appendLog(QStringLiteral("LR24 pairing verified: address=%1 model=%2")
                   .arg(m_radioActualAddress).arg(m_radioProductModel));
@@ -1129,6 +1143,7 @@ void ZenithProtocolClient::completeRadioPairing()
 
 void ZenithProtocolClient::failRadioPairing(const QString &code, const QString &message)
 {
+    m_serialWriter.stop();
     m_radioPairingTimer.stop();
     m_radioPairingErrorCode = code;
     m_radioPairingErrorText = message.isEmpty()
@@ -1379,8 +1394,18 @@ QSerialPortInfo ZenithProtocolClient::currentSerialPortInfo() const
     return actual.isEmpty() ? QSerialPortInfo() : QSerialPortInfo(actual);
 }
 
-qint64 ZenithProtocolClient::writeSerial(const QByteArray &data)
+bool ZenithProtocolClient::enqueueSerial(const QByteArray &data)
 {
+    if (!m_active || !m_serialPort.isOpen() || !radioPairingReady()) return false;
+    if (m_serialWriter.enqueue(data)) return true;
+    appendLog(QStringLiteral("Serial transmit queue rejected message (%1 bytes): full, inactive or empty")
+                  .arg(data.size()));
+    return false;
+}
+
+qint64 ZenithProtocolClient::writeSerialConfig(const QByteArray &data)
+{
+    if (!m_active || !m_serialPort.isOpen() || radioPairingReady()) return -1;
     const qint64 written = m_serialPort.write(data);
     if (written > 0) {
         m_serialTxBytes += static_cast<quint64>(written);

@@ -9,6 +9,7 @@
 #include <QVariantMap>
 
 #include "Lr24RadioProtocol.h"
+#include "PacedSerialWriter.h"
 #include "ZenithMavlinkCodec.h"
 
 enum class TransportMode { Network, Serial };
@@ -160,7 +161,8 @@ private:
     void rememberSerialIdentity(const QString &portName, const QSerialPortInfo &info);
     bool restoreSerialIdentity(const QString &portName);
     QSerialPortInfo currentSerialPortInfo() const;
-    qint64 writeSerial(const QByteArray &data);
+    bool enqueueSerial(const QByteArray &data);
+    qint64 writeSerialConfig(const QByteArray &data);
     void updateSerialRates(qint64 now);
     void onSerialReadyRead();
     void onSerialError(QSerialPort::SerialPortError error);
@@ -241,6 +243,7 @@ private:
     // Serial transport
     TransportMode m_transportMode{TransportMode::Network};
     QSerialPort m_serialPort;
+    PacedSerialWriter m_serialWriter{&m_serialPort};
     QByteArray m_serialRecvBuffer;
     QString m_serialPortName;
     QString m_serialActualPortName;

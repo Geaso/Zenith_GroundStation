@@ -20,6 +20,8 @@ set(APP_SOURCES
     src/TelemetryStore.h
     src/ZenithProtocolClient.cpp
     src/ZenithProtocolClient.h
+    src/PacedSerialWriter.cpp
+    src/PacedSerialWriter.h
     src/Lr24RadioProtocol.cpp
     src/Lr24RadioProtocol.h
     src/RadioPairingModel.cpp
@@ -128,6 +130,7 @@ qt_add_executable(ZenithMavlinkProbe
     src/CommandDispatcher.cpp src/CommandDispatcher.h
     src/ZenithMavlinkCodec.cpp src/ZenithMavlinkCodec.h
     src/ZenithProtocolClient.cpp src/ZenithProtocolClient.h
+    src/PacedSerialWriter.cpp src/PacedSerialWriter.h
     src/Lr24RadioProtocol.cpp src/Lr24RadioProtocol.h
     src/TelemetryStore.cpp src/TelemetryStore.h
 )
@@ -137,6 +140,15 @@ target_include_directories(ZenithMavlinkProbe SYSTEM PRIVATE third_party)
 target_link_libraries(ZenithMavlinkProbe PRIVATE Qt6::Core Qt6::Gui Qt6::Network Qt6::SerialPort)
 
 if(BUILD_TESTING)
+    qt_add_executable(PacedSerialWriterTests
+        tests/test_paced_serial_writer.cpp
+        src/PacedSerialWriter.cpp src/PacedSerialWriter.h
+    )
+    set_target_properties(PacedSerialWriterTests PROPERTIES WIN32_EXECUTABLE FALSE)
+    target_include_directories(PacedSerialWriterTests PRIVATE src)
+    target_link_libraries(PacedSerialWriterTests PRIVATE Qt6::Core)
+    add_test(NAME paced_serial_writer COMMAND PacedSerialWriterTests)
+    set_tests_properties(paced_serial_writer PROPERTIES TIMEOUT 15)
     add_test(NAME qml_module_load COMMAND ZenithGroundStationQt --check-ui)
     set_tests_properties(qml_module_load PROPERTIES
         TIMEOUT 15
@@ -147,6 +159,7 @@ if(BUILD_TESTING)
         src/ParamStore.cpp src/ParamStore.h
         src/ZenithMavlinkCodec.cpp src/ZenithMavlinkCodec.h
         src/ZenithProtocolClient.cpp src/ZenithProtocolClient.h
+        src/PacedSerialWriter.cpp src/PacedSerialWriter.h
         src/Lr24RadioProtocol.cpp src/Lr24RadioProtocol.h
         src/TelemetryStore.cpp src/TelemetryStore.h
     )
